@@ -20,9 +20,9 @@ public class TextureAtlas {
 
     // tile order in the atlas
     public static final int GRASS_TOP = 0, GRASS_SIDE = 1, DIRT = 2, STONE = 3,
-                            WOOD_TOP = 4, WOOD_SIDE = 5, LEAVES = 6, SAND = 7, BEDROCK = 8;
+                            WOOD_TOP = 4, WOOD_SIDE = 5, LEAVES = 6, SAND = 7, BEDROCK = 8, COAL = 9;
     private static final String[] FILES = {
-        "grass_top", "grass_side", "dirt", "stone", "wood_top", "wood_side", "leaves", "sand", "bedrock"
+        "grass_top", "grass_side", "dirt", "stone", "wood_top", "wood_side", "leaves", "sand", "bedrock", "coal"
     };
     // fallback colours when a PNG is absent (rough match to block colours)
     private static final byte[] FB = block().clone();
@@ -143,6 +143,7 @@ public class TextureAtlas {
             case World.LEAVES: return LEAVES;
             case World.SAND:   return SAND;
             case World.BEDROCK: return BEDROCK;
+            case World.COAL:   return COAL;
             default:           return STONE;
         }
     }
@@ -158,7 +159,8 @@ public class TextureAtlas {
             (byte)115,(byte)82,(byte)46,    // wood_side
             (byte)51,(byte)133,(byte)46,    // leaves
             (byte)217,(byte)204,(byte)140,  // sand
-            (byte)45,(byte)45,(byte)48      // bedrock
+            (byte)45,(byte)45,(byte)48,     // bedrock
+            (byte)60,(byte)60,(byte)64      // coal
         };
     }
 }

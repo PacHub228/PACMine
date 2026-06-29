@@ -1,33 +1,43 @@
 package com.voxel;
 
 /**
- * Voxel world: fixed-size, divided into vertical-column chunks of CHUNK x CHUNK.
- * Terrain is generated from layered value noise. Each chunk keeps its own mesh
- * (display list) so block edits only rebuild one chunk.
+ * Voxel world divided into vertical-column chunks of CHUNK x CHUNK. The
+ * horizontal size is configurable (in chunks); height is fixed. Terrain is
+ * generated from layered value noise, and each chunk keeps its own mesh so
+ * block edits only rebuild one chunk.
  */
 public class World {
-    public static final int SX = 128, SY = 64, SZ = 128; // world size in blocks
-    public static final int CHUNK = 16;                  // chunk footprint
-    public static final int CX = SX / CHUNK, CZ = SZ / CHUNK;
+    public static final int CHUNK = 14;   // chunk footprint in blocks
+    public static final int SY = 64;      // world height (fixed)
 
     // Block ids
-    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7;
+    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8;
 
-    private final byte[] blocks = new byte[SX * SY * SZ];
+    public final int cx, cz;   // size in chunks
+    public final int sx, sz;   // size in blocks
+    private final byte[] blocks;
 
-    private final boolean bedrockLayer;
-
-    public World(long seed) { this(seed, true); }
-
-    public World(long seed, boolean bedrockLayer) {
-        this.bedrockLayer = bedrockLayer;
-        generate(seed);
+    /** Generate a fresh world of `chunks` x `chunks`. */
+    public World(long seed, int chunks, boolean bedrockLayer) {
+        this.cx = chunks; this.cz = chunks;
+        this.sx = chunks * CHUNK; this.sz = chunks * CHUNK;
+        this.blocks = new byte[sx * SY * sz];
+        generate(seed, bedrockLayer);
     }
 
-    private int idx(int x, int y, int z) { return (y * SZ + z) * SX + x; }
+    /** Load an existing world from saved block data. */
+    public World(int chunks, byte[] data) {
+        this.cx = chunks; this.cz = chunks;
+        this.sx = chunks * CHUNK; this.sz = chunks * CHUNK;
+        this.blocks = data;
+    }
+
+    public byte[] data() { return blocks; }
+
+    private int idx(int x, int y, int z) { return (y * sz + z) * sx + x; }
 
     public boolean inBounds(int x, int y, int z) {
-        return x >= 0 && x < SX && y >= 0 && y < SY && z >= 0 && z < SZ;
+        return x >= 0 && x < sx && y >= 0 && y < SY && z >= 0 && z < sz;
     }
 
     public byte get(int x, int y, int z) {
@@ -45,10 +55,11 @@ public class World {
     }
 
     // ---- terrain generation ----
-    private void generate(long seed) {
+    private void generate(long seed, boolean bedrockLayer) {
         Noise n = new Noise(seed);
-        for (int x = 0; x < SX; x++) {
-            for (int z = 0; z < SZ; z++) {
+        java.util.Random rnd = new java.util.Random(seed);
+        for (int x = 0; x < sx; x++) {
+            for (int z = 0; z < sz; z++) {
                 double e = 0;
                 e += n.noise(x * 0.015, z * 0.015) * 1.0;
                 e += n.noise(x * 0.04, z * 0.04) * 0.4;
@@ -62,10 +73,9 @@ public class World {
                     if (y == 0 && bedrockLayer) b = BEDROCK;
                     else if (y == h) b = (h < 20) ? SAND : GRASS;
                     else if (y > h - 4) b = DIRT;
-                    else             b = STONE;
+                    else             b = (rnd.nextDouble() < 0.03) ? COAL : STONE; // coal ore in stone
                     set(x, y, z, b);
                 }
-                // a little water-table look: leave sand near low areas (handled above)
 
                 // occasional tree on grass
                 if (get(x, h, z) == GRASS && n.noise(x * 1.7 + 13, z * 1.7 + 7) > 0.8) {
@@ -89,7 +99,7 @@ public class World {
         set(x, top + 2, z, LEAVES);
     }
 
-    // ---- colors per block (r,g,b) used by the renderer ----
+    // ---- colors per block (r,g,b), kept for reference ----
     public static float[] color(byte b) {
         switch (b) {
             case GRASS:  return new float[]{0.35f, 0.66f, 0.27f};
@@ -99,6 +109,7 @@ public class World {
             case LEAVES: return new float[]{0.20f, 0.52f, 0.18f};
             case SAND:   return new float[]{0.85f, 0.80f, 0.55f};
             case BEDROCK: return new float[]{0.18f, 0.18f, 0.19f};
+            case COAL:   return new float[]{0.30f, 0.30f, 0.32f};
             default:     return new float[]{1f, 0f, 1f};
         }
     }

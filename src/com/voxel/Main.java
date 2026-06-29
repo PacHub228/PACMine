@@ -4,6 +4,7 @@ import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
+import java.io.IOException;
 import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
 
@@ -25,16 +26,26 @@ public class Main {
     private double lastX, lastY;
     private double mouseX, mouseY;
     private boolean firstMouse = true;
-    private boolean inMenu = true;
-    private boolean inSettings = false;
-    private boolean inCredits = false;
 
-    // settings
+    // UI state
+    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS }
+    private String selectedWorld = null;
+    private boolean inMenu = true;
+    private Screen screen = Screen.MAIN;
+    private boolean paused = false;        // in-game pause overlay
+    private java.util.List<String> worldList = new java.util.ArrayList<>();
+    private int newChunks = 8;             // world size (chunks) for creation
+    private String worldName = null;       // currently loaded world
+
+    // settings (used when creating a world)
     private boolean hostileMobs = true;
     private boolean creativeMode = false;   // false = survival
     private boolean protection = true;       // bedrock + edge barrier
     private boolean breakHeld, placeHeld;
-    private byte currentBlock = World.STONE;
+    // hotbar inventory
+    private final byte[] hotbar = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL };
+    private int selectedSlot = 2; // stone
+    private byte currentBlock() { return hotbar[selectedSlot]; }
 
     // sword reward: chop 3 trees (4 logs each) to earn it
     private static final int LOGS_PER_TREE = 4, TREES_NEEDED = 3;
@@ -76,6 +87,10 @@ public class Main {
         glfwSetKeyCallback(window, this::onKey);
         glfwSetMouseButtonCallback(window, this::onMouse);
         glfwSetCursorPosCallback(window, this::onCursor);
+        glfwSetScrollCallback(window, (w, dx, dy) -> {
+            if (inMenu || paused) return;
+            selectedSlot = (selectedSlot - (int) Math.signum(dy) + hotbar.length) % hotbar.length;
+        });
 
         // center window
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -89,7 +104,7 @@ public class Main {
         glfwSwapInterval(1);
         glfwShowWindow(window);
         // re-grab the cursor whenever the window regains focus (but not in the menu)
-        glfwSetWindowFocusCallback(window, (w, focused) -> { if (focused && !inMenu) grabCursor(); });
+        glfwSetWindowFocusCallback(window, (w, focused) -> { if (focused && !inMenu && !paused) grabCursor(); });
         GL.createCapabilities();
 
         glEnable(GL_DEPTH_TEST);
@@ -106,27 +121,72 @@ public class Main {
         heartFull  = TextureAtlas.loadStandalone("assets/heart_all.png");
         heartHalf  = TextureAtlas.loadStandalone("assets/heart_noneall.png");
         updateTitle();
-        startGame();
     }
 
-    /** Build a fresh world/player/mobs according to the current settings. */
-    private void startGame() {
-        world = new World(System.nanoTime(), protection);
+    /** Create a brand-new world of the chosen size and start playing it. */
+    private void newWorld(int chunks) {
+        world = new World(System.nanoTime(), chunks, protection);
         renderer = new ChunkRenderer(world, atlas);
-        int sx = World.SX / 2, sz = World.SZ / 2;
+        spawnX = world.sx / 2; spawnZ = world.sz / 2;
         int sy = World.SY - 1;
         while (sy > 0) {
-            byte b = world.get(sx, sy, sz);
+            byte b = world.get(spawnX, sy, spawnZ);
             if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
             sy--;
         }
-        spawnX = sx; spawnY = sy + 1; spawnZ = sz;
-        player = new Player(world, sx + 0.5, sy + 1, sz + 0.5);
+        spawnY = sy + 1;
+        player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode;
         player.borderWalls = protection;
         hasSword = false; logsBroken = 0;
         zombies.clear();
-        if (hostileMobs) spawnZombies(8, sx, sz);
+        if (hostileMobs) spawnZombies(8, spawnX, spawnZ);
+        worldName = SaveGame.nextName();
+        try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+        enterGame();
+    }
+
+    /** Load a saved world by name and start playing it. */
+    private void loadWorld(String name) {
+        try {
+            SaveGame s = SaveGame.load(name);
+            hostileMobs = s.hostileMobs; creativeMode = s.creative; protection = s.protection;
+            world = new World(s.chunks, s.blocks);
+            renderer = new ChunkRenderer(world, atlas);
+            player = new Player(world, s.px, s.py, s.pz);
+            player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
+            player.creative = creativeMode; player.borderWalls = protection;
+            hasSword = s.hasSword; logsBroken = s.logsBroken;
+            spawnX = world.sx / 2; spawnY = (int) s.py; spawnZ = world.sz / 2;
+            zombies.clear();
+            if (hostileMobs) spawnZombies(8, (int) s.px, (int) s.pz);
+            worldName = name;
+            enterGame();
+        } catch (IOException e) {
+            System.err.println("load failed: " + e.getMessage());
+        }
+    }
+
+    private void saveWorld() throws IOException {
+        if (worldName == null) return;
+        SaveGame s = new SaveGame();
+        s.chunks = world.cx;
+        s.hostileMobs = hostileMobs; s.creative = creativeMode; s.protection = protection;
+        s.px = player.x; s.py = player.y; s.pz = player.z;
+        s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
+        s.hasSword = hasSword; s.logsBroken = logsBroken;
+        s.blocks = world.data();
+        s.save(worldName);
+    }
+
+    private void enterGame() { inMenu = false; paused = false; grabCursor(); }
+
+    /** Respawn the player in the current world after death (world is kept). */
+    private void resetPlayer() {
+        player.x = spawnX + 0.5; player.y = spawnY; player.z = spawnZ + 0.5;
+        player.vy = 0; player.health = Player.MAX_HEARTS;
+        zombies.clear();
+        if (hostileMobs) spawnZombies(8, spawnX, spawnZ);
     }
 
     private void spawnZombies(int n, int cx, int cz) {
@@ -142,21 +202,20 @@ public class Main {
     private void onKey(long w, int key, int sc, int action, int mods) {
         if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
             if (inMenu) {
-                if (inSettings) inSettings = false;
-                else if (inCredits) inCredits = false;
-                else glfwSetWindowShouldClose(w, true);
-            } else { inMenu = true; glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
+                if (screen == Screen.MAIN) glfwSetWindowShouldClose(w, true);
+                else if (screen == Screen.CREATE || screen == Screen.WORLD_MENU) screen = Screen.WORLDS;
+                else screen = Screen.MAIN;
+            } else {
+                // toggle the in-game pause menu
+                paused = !paused;
+                glfwSetInputMode(w, GLFW_CURSOR, paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
+                if (!paused) firstMouse = true;
+            }
             return;
         }
-        if (action == GLFW_PRESS) {
-            switch (key) {
-                case GLFW_KEY_1: currentBlock = World.GRASS; break;
-                case GLFW_KEY_2: currentBlock = World.DIRT; break;
-                case GLFW_KEY_3: currentBlock = World.STONE; break;
-                case GLFW_KEY_4: currentBlock = World.WOOD; break;
-                case GLFW_KEY_5: currentBlock = World.LEAVES; break;
-                case GLFW_KEY_6: currentBlock = World.SAND; break;
-            }
+        if (action == GLFW_PRESS && key >= GLFW_KEY_1 && key <= GLFW_KEY_9) {
+            int slot = key - GLFW_KEY_1;
+            if (slot < hotbar.length) selectedSlot = slot;
         }
     }
 
@@ -164,6 +223,10 @@ public class Main {
         boolean down = action == GLFW_PRESS;
         if (inMenu) {
             if (down && button == GLFW_MOUSE_BUTTON_LEFT) menuClick();
+            return;
+        }
+        if (paused) {
+            if (down && button == GLFW_MOUSE_BUTTON_LEFT) pauseClick();
             return;
         }
         // if the cursor ever slipped out of capture, a click re-grabs it
@@ -214,7 +277,7 @@ public class Main {
 
     private void onCursor(long w, double xpos, double ypos) {
         mouseX = xpos; mouseY = ypos;
-        if (inMenu) return;
+        if (inMenu || paused) return;
         if (firstMouse) { lastX = xpos; lastY = ypos; firstMouse = false; return; }
         double dx = xpos - lastX, dy = ypos - lastY;
         lastX = xpos; lastY = ypos;
@@ -238,7 +301,7 @@ public class Main {
             if (world.isSolid(bx, by, bz)) {
                 if (place) {
                     if (px >= 0 && !world.isSolid(px, py, pz)) {
-                        world.set(px, py, pz, currentBlock);
+                        world.set(px, py, pz, currentBlock());
                         renderer.markDirty(px, pz);
                     }
                 } else if (world.get(bx, by, bz) != World.BEDROCK) {
@@ -271,15 +334,14 @@ public class Main {
                 continue;
             }
 
-            handleMovement(dt);
-            for (Zombie z : zombies) z.update(player, dt);
+            if (!paused) {
+                handleMovement(dt);
+                for (Zombie z : zombies) z.update(player, dt);
 
-            // death, or falling into the void when protection is off
-            if (player.isDead() || (!player.creative && player.y < -5)) {
-                startGame();
-                inMenu = true;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-                continue;
+                // death, or falling into the void when protection is off
+                if (player.isDead() || (!player.creative && player.y < -5)) {
+                    resetPlayer();
+                }
             }
 
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -287,6 +349,7 @@ public class Main {
             renderer.render();
             renderZombies();
             drawHud();
+            if (paused) drawPauseMenu();
 
             glfwSwapBuffers(window);
             glfwPollEvents();
@@ -344,6 +407,7 @@ public class Main {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         drawHearts();
+        drawHotbar();
 
         // HUD panel in the TOP-LEFT corner
         float pad = 16, sz = 80;
@@ -473,40 +537,67 @@ public class Main {
 
     // a centred button stack: index 0 is the top button
     private float[] menuRect(int i) {
-        float bw = 320, bh = 60, cx = width / 2f, y = height * 0.42f + i * 78;
+        float bw = 320, bh = 52, cx = width / 2f, y = height * 0.26f + i * 64;
         return new float[]{cx - bw/2, y, cx + bw/2, y + bh};
     }
     private float[] playRect()     { return menuRect(0); }
-    private float[] settingsRect() { return menuRect(1); }
-    private float[] creditsRect()  { return menuRect(2); }
-    private float[] quitRect()     { return menuRect(3); }
-    private float[] backRect()     { return menuRect(4); }
+    private float[] creditsRect()  { return menuRect(1); }
+    private float[] quitRect()     { return menuRect(2); }
+    private float[] backRect()     { return menuRect(6); }
 
     private boolean inRect(float[] r, double px, double py) {
         return px >= r[0] && px <= r[2] && py >= r[1] && py <= r[3];
     }
 
     private void menuClick() {
-        if (inSettings) { settingsClick(); return; }
-        if (inCredits) { if (inRect(backRect(), mouseX, mouseY)) inCredits = false; return; }
-        if (inRect(playRect(), mouseX, mouseY)) {
-            startGame();          // fresh game with current settings
-            inMenu = false;
-            grabCursor();
-        } else if (inRect(settingsRect(), mouseX, mouseY)) {
-            inSettings = true;
-        } else if (inRect(creditsRect(), mouseX, mouseY)) {
-            inCredits = true;
-        } else if (inRect(quitRect(), mouseX, mouseY)) {
-            glfwSetWindowShouldClose(window, true);
+        switch (screen) {
+            case MAIN:
+                if (inRect(playRect(), mouseX, mouseY)) { worldList = SaveGame.list(); screen = Screen.WORLDS; }
+                else if (inRect(creditsRect(), mouseX, mouseY)) screen = Screen.CREDITS;
+                else if (inRect(quitRect(), mouseX, mouseY)) glfwSetWindowShouldClose(window, true);
+                break;
+            case WORLDS:
+                for (int i = 0; i < worldList.size(); i++)
+                    if (inRect(menuRect(i), mouseX, mouseY)) { selectedWorld = worldList.get(i); screen = Screen.WORLD_MENU; return; }
+                if (inRect(menuRect(worldList.size()), mouseX, mouseY)) screen = Screen.CREATE;
+                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
+                break;
+            case WORLD_MENU:
+                if (inRect(menuRect(0), mouseX, mouseY)) loadWorld(selectedWorld);
+                else if (inRect(menuRect(1), mouseX, mouseY)) {
+                    SaveGame.delete(selectedWorld);
+                    worldList = SaveGame.list();
+                    screen = Screen.WORLDS;
+                } else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
+                break;
+            case CREATE:
+                if (inRect(sizeMinusRect(), mouseX, mouseY)) newChunks = Math.max(2, newChunks - 1);
+                else if (inRect(sizePlusRect(), mouseX, mouseY)) newChunks = Math.min(24, newChunks + 1);
+                else if (inRect(menuRect(1), mouseX, mouseY)) hostileMobs = !hostileMobs;
+                else if (inRect(menuRect(2), mouseX, mouseY)) creativeMode = !creativeMode;
+                else if (inRect(menuRect(3), mouseX, mouseY)) protection = !protection;
+                else if (inRect(menuRect(4), mouseX, mouseY)) newWorld(newChunks);
+                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
+                break;
+            case CREDITS:
+                if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
+                break;
         }
     }
 
-    private void settingsClick() {
-        if (inRect(menuRect(0), mouseX, mouseY)) hostileMobs = !hostileMobs;
-        else if (inRect(menuRect(1), mouseX, mouseY)) creativeMode = !creativeMode;
-        else if (inRect(menuRect(2), mouseX, mouseY)) protection = !protection;
-        else if (inRect(backRect(), mouseX, mouseY)) inSettings = false;
+    private float[] sizeMinusRect() { float[] r = menuRect(0); float mid=(r[0]+r[2])/2; return new float[]{r[0], r[1], mid, r[3]}; }
+    private float[] sizePlusRect()  { float[] r = menuRect(0); float mid=(r[0]+r[2])/2; return new float[]{mid, r[1], r[2], r[3]}; }
+
+    private void pauseClick() {
+        if (inRect(menuRect(0), mouseX, mouseY)) {                 // continue
+            paused = false; grabCursor();
+        } else if (inRect(menuRect(1), mouseX, mouseY)) {          // save world
+            try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+        } else if (inRect(menuRect(2), mouseX, mouseY)) {          // save and quit to menu
+            try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+            paused = false; inMenu = true; screen = Screen.MAIN;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
     }
 
     private void renderMenu() {
@@ -521,40 +612,57 @@ public class Main {
         glDisable(GL_CULL_FACE);
         glDisable(GL_TEXTURE_2D);
 
-        String title = inSettings ? "SETTINGS" : inCredits ? "CREDITS" : "PACMINE";
+        String title;
+        switch (screen) {
+            case WORLDS: title = "SELECT WORLD"; break;
+            case WORLD_MENU: title = selectedWorld; break;
+            case CREATE: title = "NEW WORLD"; break;
+            case CREDITS: title = "CREDITS"; break;
+            default: title = "PACMINE";
+        }
         float ts = 9;
         glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw(title, width/2f - Font5x7.width(title, ts)/2, height * 0.16f, ts);
+        Font5x7.draw(title, width/2f - Font5x7.width(title, ts)/2, height * 0.12f, ts);
 
-        if (inSettings) {
-            drawButton(menuRect(0), "MOBS  " + onOff(hostileMobs), 0.3f, 0.4f, 0.55f);
-            drawButton(menuRect(1), "MODE  " + (creativeMode ? "CREATIVE" : "SURVIVAL"), 0.3f, 0.4f, 0.55f);
-            drawButton(menuRect(2), "PROTECT  " + onOff(protection), 0.3f, 0.4f, 0.55f);
-            drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
-        } else if (inCredits) {
-            String[] lines = {
-                "A VOXEL SANDBOX GAME",
-                "",
-                "CREATED BY",
-                "PACHUB/PACPERLAR",
-                "BUILT USING CLAUDE",
-                "",
-                "THANKS FOR PLAYING"
-            };
-            float cs = 4;
-            glColor3f(0.9f, 0.9f, 0.95f);
-            float y = height * 0.34f;
-            for (String ln : lines) {
-                if (!ln.isEmpty())
-                    Font5x7.draw(ln, width/2f - Font5x7.width(ln, cs)/2, y, cs);
-                y += 9 * cs;
-            }
-            drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-        } else {
-            drawButton(playRect(),     "PLAY", 0.25f, 0.6f, 0.3f);
-            drawButton(settingsRect(), "SETTINGS", 0.3f, 0.45f, 0.6f);
-            drawButton(creditsRect(),  "CREDITS", 0.45f, 0.4f, 0.55f);
-            drawButton(quitRect(),     "QUIT", 0.6f, 0.25f, 0.25f);
+        switch (screen) {
+            case MAIN:
+                drawButton(playRect(),    "PLAY", 0.25f, 0.6f, 0.3f);
+                drawButton(creditsRect(), "CREDITS", 0.45f, 0.4f, 0.55f);
+                drawButton(quitRect(),    "QUIT", 0.6f, 0.25f, 0.25f);
+                break;
+            case WORLDS:
+                for (int i = 0; i < worldList.size(); i++)
+                    drawButton(menuRect(i), worldList.get(i), 0.3f, 0.45f, 0.6f);
+                drawButton(menuRect(worldList.size()), "+ NEW WORLD", 0.25f, 0.55f, 0.3f);
+                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
+                break;
+            case WORLD_MENU:
+                drawButton(menuRect(0), "PLAY", 0.25f, 0.6f, 0.3f);
+                drawButton(menuRect(1), "DELETE", 0.65f, 0.25f, 0.25f);
+                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
+                break;
+            case CREATE:
+                drawButton(menuRect(0), "- SIZE " + newChunks + " +", 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(1), "MOBS  " + onOff(hostileMobs), 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(2), "MODE  " + (creativeMode ? "CREATIVE" : "SURVIVAL"), 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(3), "PROTECT  " + onOff(protection), 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(4), "CREATE", 0.25f, 0.6f, 0.3f);
+                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
+                break;
+            case CREDITS:
+                String[] lines = {
+                    "A VOXEL SANDBOX GAME", "", "CREATED BY", "PACHUB/PACPERLAR",
+                    "BUILT USING CLAUDE", "", "THANKS FOR PLAYING"
+                };
+                float cs = 4;
+                glColor3f(0.9f, 0.9f, 0.95f);
+                float y = height * 0.30f;
+                for (String ln : lines) {
+                    if (!ln.isEmpty()) Font5x7.draw(ln, width/2f - Font5x7.width(ln, cs)/2, y, cs);
+                    y += 9 * cs;
+                }
+                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
+                break;
         }
 
         glEnable(GL_TEXTURE_2D);
@@ -566,6 +674,38 @@ public class Main {
     }
 
     private String onOff(boolean b) { return b ? "ON" : "OFF"; }
+
+    private void drawPauseMenu() {
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+        glOrtho(0, width, height, 0, -1, 1);
+        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // dim the world
+        glColor4f(0, 0, 0, 0.5f);
+        quad(0, 0, width, height);
+
+        glColor3f(0.85f, 0.95f, 0.6f);
+        String title = "PAUSED";
+        float ts = 9;
+        Font5x7.draw(title, width/2f - Font5x7.width(title, ts)/2, height * 0.2f, ts);
+
+        drawButton(menuRect(0), "CONTINUE", 0.25f, 0.55f, 0.3f);
+        drawButton(menuRect(1), "SAVE WORLD", 0.3f, 0.45f, 0.6f);
+        drawButton(menuRect(2), "SAVE AND QUIT", 0.5f, 0.4f, 0.25f);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION); glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
+    }
 
     private void drawButton(float[] r, String label, float cr, float cg, float cb) {
         boolean hover = inRect(r, mouseX, mouseY);
@@ -586,7 +726,7 @@ public class Main {
         float hs = 34, gap = 4;
         float totalW = n * (hs + gap) - gap;
         float x = width / 2f - totalW / 2;
-        float y = height - hs - 24;
+        float y = height - hs - 24 - 72; // sit above the hotbar
         for (int i = 0; i < n; i++) {
             double val = player.health - i;
             float hx = x + i * (hs + gap);
@@ -608,6 +748,36 @@ public class Main {
                 glEnd();
                 glDisable(GL_TEXTURE_2D);
             }
+        }
+    }
+
+    /** Hotbar of block slots at the bottom-centre; selected slot is highlighted. */
+    private void drawHotbar() {
+        int n = hotbar.length;
+        float slot = 56, gap = 6, pad = 6;
+        float totalW = n * (slot + gap) - gap;
+        float x0 = width / 2f - totalW / 2;
+        float y0 = height - slot - 18;
+
+        for (int i = 0; i < n; i++) {
+            float sx = x0 + i * (slot + gap);
+            boolean sel = i == selectedSlot;
+            // slot background
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(sel ? 0.9f : 0f, sel ? 0.9f : 0f, sel ? 0.5f : 0f, sel ? 0.6f : 0.45f);
+            quad(sx - 2, y0 - 2, sx + slot + 2, y0 + slot + 2);
+            // block icon from the atlas
+            glEnable(GL_TEXTURE_2D);
+            atlas.bind();
+            float[] uv = atlas.uv(atlas.tileFor(hotbar[i], 2));
+            glColor4f(1, 1, 1, 1);
+            glBegin(GL_QUADS);
+            glTexCoord2f(uv[0], uv[1]); glVertex2f(sx + pad, y0 + pad);
+            glTexCoord2f(uv[2], uv[1]); glVertex2f(sx + slot - pad, y0 + pad);
+            glTexCoord2f(uv[2], uv[3]); glVertex2f(sx + slot - pad, y0 + slot - pad);
+            glTexCoord2f(uv[0], uv[3]); glVertex2f(sx + pad, y0 + slot - pad);
+            glEnd();
+            glDisable(GL_TEXTURE_2D);
         }
     }
 

@@ -43,8 +43,8 @@ public class Zombie {
             attackTimer = ATTACK_COOLDOWN;
         }
         // keep inside the world
-        if (x < 1) x = 1; if (x > World.SX - 1) x = World.SX - 1;
-        if (z < 1) z = 1; if (z > World.SZ - 1) z = World.SZ - 1;
+        if (x < 1) x = 1; if (x > world.sx - 1) x = world.sx - 1;
+        if (z < 1) z = 1; if (z > world.sz - 1) z = world.sz - 1;
 
         // target ground surface at this column (ignore tree leaves/logs)
         int bx = (int) Math.floor(x), bz = (int) Math.floor(z);

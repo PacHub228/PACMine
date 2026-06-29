@@ -94,7 +94,7 @@ public class Player {
         int y0 = (int) Math.floor(y),     y1 = (int) Math.floor(y + H);
         int z0 = (int) Math.floor(z - W), z1 = (int) Math.floor(z + W);
         // invisible walls at the world edges so you can't fall off the map
-        if (borderWalls && (x0 < 0 || x1 >= World.SX || z0 < 0 || z1 >= World.SZ)) return true;
+        if (borderWalls && (x0 < 0 || x1 >= world.sx || z0 < 0 || z1 >= world.sz)) return true;
         for (int bx = x0; bx <= x1; bx++)
             for (int by = y0; by <= y1; by++)
                 for (int bz = z0; bz <= z1; bz++)

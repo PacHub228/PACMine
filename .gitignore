@@ -4,6 +4,9 @@ out/
 # downloaded LWJGL jars (run get-deps.sh to fetch)
 lib/*.jar
 
+# saved worlds
+saves/
+
 # editor/working files
 assets/*.kra
 *.class

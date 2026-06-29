@@ -19,8 +19,8 @@ public class ChunkRenderer {
     public ChunkRenderer(World world, TextureAtlas atlas) {
         this.world = world;
         this.atlas = atlas;
-        lists = new int[World.CX * World.CZ];
-        dirty = new boolean[World.CX * World.CZ];
+        lists = new int[world.cx * world.cz];
+        dirty = new boolean[world.cx * world.cz];
         for (int i = 0; i < lists.length; i++) { lists[i] = glGenLists(1); dirty[i] = true; }
     }
 
@@ -34,15 +34,15 @@ public class ChunkRenderer {
     }
 
     private void mark(int cx, int cz) {
-        if (cx < 0 || cz < 0 || cx >= World.CX || cz >= World.CZ) return;
-        dirty[cz * World.CX + cx] = true;
+        if (cx < 0 || cz < 0 || cx >= world.cx || cz >= world.cz) return;
+        dirty[cz * world.cx + cx] = true;
     }
 
     public void render() {
         atlas.bind();
-        for (int cz = 0; cz < World.CZ; cz++) {
-            for (int cx = 0; cx < World.CX; cx++) {
-                int i = cz * World.CX + cx;
+        for (int cz = 0; cz < world.cz; cz++) {
+            for (int cx = 0; cx < world.cx; cx++) {
+                int i = cz * world.cx + cx;
                 if (dirty[i]) { rebuild(cx, cz, lists[i]); dirty[i] = false; }
                 glCallList(lists[i]);
             }

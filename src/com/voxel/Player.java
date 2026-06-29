@@ -78,7 +78,19 @@ public class Player {
         moveAxis(0, 0, dz);
         onGround = false;
         moveAxis(0, dy, 0);
+
+        // fall damage: accumulate distance fallen, apply on landing
+        if (!creative) {
+            if (onGround) {
+                double safe = 3.0;                       // free fall up to 3 blocks
+                if (fallAccum > safe) health -= (fallAccum - safe) * 0.5; // 0.5 heart per extra block
+                fallAccum = 0;
+            } else if (dy < 0) {
+                fallAccum += -dy;
+            }
+        }
     }
+    private double fallAccum = 0;
 
     private void moveAxis(double dx, double dy, double dz) {
         x += dx; y += dy; z += dz;

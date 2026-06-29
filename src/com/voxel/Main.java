@@ -43,7 +43,7 @@ public class Main {
     private boolean protection = true;       // bedrock + edge barrier
     private boolean breakHeld, placeHeld;
     // hotbar inventory
-    private final byte[] hotbar = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL };
+    private final byte[] hotbar = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL, World.IRON };
     private int selectedSlot = 2; // stone
     private byte currentBlock() { return hotbar[selectedSlot]; }
 
@@ -183,6 +183,14 @@ public class Main {
 
     /** Respawn the player in the current world after death (world is kept). */
     private void resetPlayer() {
+        // recompute a safe surface height at the spawn column
+        int sy = World.SY - 1;
+        while (sy > 0) {
+            byte b = world.get(spawnX, sy, spawnZ);
+            if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
+            sy--;
+        }
+        spawnY = sy + 1;
         player.x = spawnX + 0.5; player.y = spawnY; player.z = spawnZ + 0.5;
         player.vy = 0; player.health = Player.MAX_HEARTS;
         zombies.clear();

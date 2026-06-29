@@ -2,6 +2,8 @@
 
 A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) (OpenGL + GLFW).
 
+> 🇷🇺 Версия на русском: [README.ru.md](README.ru.md)
+
 ## Features
 - Procedurally generated terrain (value-noise hills, trees, sand near water level)
 - First-person movement with gravity, jumping and AABB collision

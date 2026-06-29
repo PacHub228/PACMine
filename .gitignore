@@ -14,3 +14,4 @@ assets/*.kra
 
 # vendored mesa (lives on the 'mesa' branch, not main)
 mesa-win.zip
+launcher/*.jar

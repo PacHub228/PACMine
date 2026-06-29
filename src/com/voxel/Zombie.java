@@ -38,7 +38,8 @@ public class Zombie {
 
         // attack the player when close enough, respecting the cooldown
         if (attackTimer > 0) attackTimer -= dt;
-        if (dist <= ATTACK_RANGE && attackTimer <= 0) {
+        boolean sameLevel = Math.abs(p.y - y) < 1.5;   // not stacked a block apart vertically
+        if (dist <= ATTACK_RANGE && sameLevel && attackTimer <= 0) {
             p.hurt(ATTACK_DAMAGE, x, z, KNOCKBACK);
             attackTimer = ATTACK_COOLDOWN;
         }

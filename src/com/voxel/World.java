@@ -11,7 +11,7 @@ public class World {
     public static final int SY = 64;      // world height (fixed)
 
     // Block ids
-    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8;
+    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9;
 
     public final int cx, cz;   // size in chunks
     public final int sx, sz;   // size in blocks
@@ -73,7 +73,7 @@ public class World {
                     if (y == 0 && bedrockLayer) b = BEDROCK;
                     else if (y == h) b = (h < 20) ? SAND : GRASS;
                     else if (y > h - 4) b = DIRT;
-                    else             b = (rnd.nextDouble() < 0.03) ? COAL : STONE; // coal ore in stone
+                    else             b = STONE;
                     set(x, y, z, b);
                 }
 
@@ -82,6 +82,30 @@ public class World {
                     plantTree(x, h + 1, z);
                 }
             }
+        }
+
+        // ore veins (clusters), replacing stone
+        int area = sx * sz;
+        int coalVeins = Math.max(8, area / 12);
+        int ironVeins = Math.max(3, area / 55);
+        for (int i = 0; i < coalVeins; i++) placeVein(rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);   // size 4..9
+        for (int i = 0; i < ironVeins; i++) placeVein(rnd, IRON, 3 + rnd.nextInt(4), 1, 16);        // size 3..6, deep
+    }
+
+    /** Grow a connected blob of `size` ore blocks via random walk through stone. */
+    private void placeVein(java.util.Random rnd, byte ore, int size, int yMin, int yMax) {
+        int x = rnd.nextInt(sx), z = rnd.nextInt(sz);
+        int y = yMin + rnd.nextInt(Math.max(1, yMax - yMin));
+        for (int i = 0; i < size; i++) {
+            if (get(x, y, z) == STONE) set(x, y, z, ore);
+            switch (rnd.nextInt(6)) {           // step to a random neighbour
+                case 0: x++; break;  case 1: x--; break;
+                case 2: y++; break;  case 3: y--; break;
+                case 4: z++; break;  case 5: z--; break;
+            }
+            x = Math.max(0, Math.min(sx - 1, x));
+            y = Math.max(yMin, Math.min(yMax, y));
+            z = Math.max(0, Math.min(sz - 1, z));
         }
     }
 
@@ -110,6 +134,7 @@ public class World {
             case SAND:   return new float[]{0.85f, 0.80f, 0.55f};
             case BEDROCK: return new float[]{0.18f, 0.18f, 0.19f};
             case COAL:   return new float[]{0.30f, 0.30f, 0.32f};
+            case IRON:   return new float[]{0.65f, 0.55f, 0.45f};
             default:     return new float[]{1f, 0f, 1f};
         }
     }

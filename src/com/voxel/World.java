@@ -15,7 +15,12 @@ public class World {
 
     private final byte[] blocks = new byte[SX * SY * SZ];
 
-    public World(long seed) {
+    private final boolean bedrockLayer;
+
+    public World(long seed) { this(seed, true); }
+
+    public World(long seed, boolean bedrockLayer) {
+        this.bedrockLayer = bedrockLayer;
         generate(seed);
     }
 
@@ -54,7 +59,7 @@ public class World {
 
                 for (int y = 0; y <= h; y++) {
                     byte b;
-                    if (y == 0)      b = BEDROCK;
+                    if (y == 0 && bedrockLayer) b = BEDROCK;
                     else if (y == h) b = (h < 20) ? SAND : GRASS;
                     else if (y > h - 4) b = DIRT;
                     else             b = STONE;

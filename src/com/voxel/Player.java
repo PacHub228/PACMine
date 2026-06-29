@@ -14,6 +14,9 @@ public class Player {
     public static final double MAX_HEARTS = 10;
     public double health = MAX_HEARTS;
 
+    public boolean creative = false;   // fly + invulnerable
+    public boolean borderWalls = true; // invisible walls at world edges
+
     private static final double W = 0.3;   // half-width
     private static final double H = 1.8;    // total height
     public static final double EYE = 1.62;  // eye offset from feet
@@ -41,6 +44,7 @@ public class Player {
 
     /** Take damage (in hearts) and get knocked back away from the source. */
     public void hurt(double hearts, double srcX, double srcZ, double knockback) {
+        if (creative) return;
         health -= hearts;
         double dx = x - srcX, dz = z - srcZ;
         double len = Math.hypot(dx, dz);
@@ -49,8 +53,8 @@ public class Player {
         moveAxis(0, 0, dz / len * knockback);
     }
 
-    /** forward/strafe in [-1,1], dt seconds. */
-    public void update(double forward, double strafe, double dt) {
+    /** forward/strafe in [-1,1], vertical in [-1,1] (creative only), dt seconds. */
+    public void update(double forward, double strafe, double vertical, double dt) {
         double yr = Math.toRadians(yaw);
         double fx = -Math.sin(yr), fz = -Math.cos(yr);
         double rx = Math.cos(yr), rz = -Math.sin(yr);
@@ -59,10 +63,16 @@ public class Player {
         double len = Math.hypot(mx, mz);
         if (len > 1e-6) { mx /= len; mz /= len; }
 
-        vy -= GRAVITY * dt;
         double dx = mx * SPEED * dt;
         double dz = mz * SPEED * dt;
-        double dy = vy * dt;
+        double dy;
+        if (creative) {
+            vy = 0;
+            dy = vertical * SPEED * dt; // free flight
+        } else {
+            vy -= GRAVITY * dt;
+            dy = vy * dt;
+        }
 
         moveAxis(dx, 0, 0);
         moveAxis(0, 0, dz);
@@ -84,7 +94,7 @@ public class Player {
         int y0 = (int) Math.floor(y),     y1 = (int) Math.floor(y + H);
         int z0 = (int) Math.floor(z - W), z1 = (int) Math.floor(z + W);
         // invisible walls at the world edges so you can't fall off the map
-        if (x0 < 0 || x1 >= World.SX || z0 < 0 || z1 >= World.SZ) return true;
+        if (borderWalls && (x0 < 0 || x1 >= World.SX || z0 < 0 || z1 >= World.SZ)) return true;
         for (int bx = x0; bx <= x1; bx++)
             for (int by = y0; by <= y1; by++)
                 for (int bz = z0; bz <= z1; bz++)

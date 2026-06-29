@@ -66,7 +66,7 @@ public class Main {
     // zombies
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
     private int zHeadFront, zHead, zBody;
-    private int pHeadFront, pHead, pBody;   // remote player textures
+    private int pHeadFront, pHead, pBody, pBodyFront;   // remote player textures
 
     // hearts / health
     private int heartFull, heartHalf;
@@ -141,6 +141,7 @@ public class Main {
         pHeadFront = TextureAtlas.loadStandalone("assets/player_head_pered.png");
         pHead      = TextureAtlas.loadStandalone("assets/player_head.png");
         pBody      = TextureAtlas.loadStandalone("assets/player.png");
+        pBodyFront = TextureAtlas.loadStandalone("assets/player_covta_pered.png");
         updateTitle();
     }
 
@@ -517,9 +518,10 @@ public class Main {
             glPushMatrix();
             glTranslatef((float) p[0], (float) p[1], (float) p[2]);
             glRotatef((float) p[3] + 180, 0, 1, 0); // front (+Z) faces the player's look direction
-            // body
+            // body: 5 faces + clothing front
             double[] body = {-0.3, 0, -0.2, 0.3, 1.2, 0.2};
-            bindBox(pBody, body, -1);
+            bindBox(pBody, body, 0);
+            bindFront(pBodyFront, body);
             // head: 5 faces + front face texture
             double[] head = {-0.25, 1.18, -0.25, 0.25, 1.7, 0.25};
             bindBox(pHead, head, 0);

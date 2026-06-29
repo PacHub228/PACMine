@@ -1,0 +1,9 @@
+# build output
+out/
+
+# downloaded LWJGL jars (run get-deps.sh to fetch)
+lib/*.jar
+
+# editor/working files
+assets/*.kra
+*.class

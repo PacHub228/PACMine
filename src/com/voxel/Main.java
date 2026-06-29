@@ -39,6 +39,10 @@ public class Main {
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
     private int zHeadFront, zHead, zBody;
 
+    // hearts / health
+    private int heartFull, heartHalf;
+    private int spawnX, spawnY, spawnZ;
+
     public void run() {
         init();
         loop();
@@ -100,12 +104,23 @@ public class Main {
             if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
             sy--;
         }
+        spawnX = sx; spawnY = sy + 1; spawnZ = sz;
         player = new Player(world, sx + 0.5, sy + 1, sz + 0.5);
 
         zHeadFront = TextureAtlas.loadStandalone("assets/zombie_head_pered.png");
         zHead      = TextureAtlas.loadStandalone("assets/zombie_head.png");
         zBody      = TextureAtlas.loadStandalone("assets/zombie.png");
+        heartFull  = TextureAtlas.loadStandalone("assets/heart_all.png");
+        heartHalf  = TextureAtlas.loadStandalone("assets/heart_noneall.png");
         spawnZombies(8, sx, sz);
+    }
+
+    /** Reset player health and position and respawn zombies (called on death). */
+    private void resetGame() {
+        player.x = spawnX + 0.5; player.y = spawnY; player.z = spawnZ + 0.5;
+        player.vy = 0; player.health = Player.MAX_HEARTS;
+        zombies.clear();
+        spawnZombies(8, spawnX, spawnZ);
     }
 
     private void spawnZombies(int n, int cx, int cz) {
@@ -176,7 +191,6 @@ public class Main {
         }
         if (best != null) {
             zombies.remove(best);
-            System.out.println("Zombie killed! remaining=" + zombies.size());
             return true;
         }
         return false;
@@ -251,6 +265,13 @@ public class Main {
             handleMovement(dt);
             for (Zombie z : zombies) z.update(player, dt);
 
+            if (player.isDead()) {   // back to menu and reset on death
+                resetGame();
+                inMenu = true;
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                continue;
+            }
+
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
             renderer.render();
@@ -306,6 +327,8 @@ public class Main {
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        drawHearts();
 
         // HUD panel in the TOP-LEFT corner
         float pad = 16, sz = 80;
@@ -494,6 +517,37 @@ public class Main {
         glColor3f(1, 1, 1);
         float lw = Font5x7.width(label, ls), lh = 7 * ls;
         Font5x7.draw(label, (r[0] + r[2]) / 2 - lw / 2, (r[1] + r[3]) / 2 - lh / 2, ls);
+    }
+
+    /** Row of hearts at the bottom-centre showing the player's health. */
+    private void drawHearts() {
+        int n = (int) Player.MAX_HEARTS;
+        float hs = 34, gap = 4;
+        float totalW = n * (hs + gap) - gap;
+        float x = width / 2f - totalW / 2;
+        float y = height - hs - 24;
+        for (int i = 0; i < n; i++) {
+            double val = player.health - i;
+            float hx = x + i * (hs + gap);
+            // empty container (dark)
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(0, 0, 0, 0.45f);
+            quad(hx - 2, y - 2, hx + hs + 2, y + hs + 2);
+            // full or half heart sprite
+            int tex = val >= 1 ? heartFull : val >= 0.5 ? heartHalf : 0;
+            if (tex != 0) {
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glColor4f(1, 1, 1, 1);
+                glBegin(GL_QUADS);
+                glTexCoord2f(0, 0); glVertex2f(hx, y);
+                glTexCoord2f(1, 0); glVertex2f(hx + hs, y);
+                glTexCoord2f(1, 1); glVertex2f(hx + hs, y + hs);
+                glTexCoord2f(0, 1); glVertex2f(hx, y + hs);
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+            }
+        }
     }
 
     private void quad(float x0, float y0, float x1, float y1) {

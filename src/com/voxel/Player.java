@@ -11,6 +11,9 @@ public class Player {
     public double vy;             // vertical velocity
     public boolean onGround;
 
+    public static final double MAX_HEARTS = 10;
+    public double health = MAX_HEARTS;
+
     private static final double W = 0.3;   // half-width
     private static final double H = 1.8;    // total height
     public static final double EYE = 1.62;  // eye offset from feet
@@ -33,6 +36,18 @@ public class Player {
     }
 
     public void jump() { if (onGround) { vy = JUMP; onGround = false; } }
+
+    public boolean isDead() { return health <= 0; }
+
+    /** Take damage (in hearts) and get knocked back away from the source. */
+    public void hurt(double hearts, double srcX, double srcZ, double knockback) {
+        health -= hearts;
+        double dx = x - srcX, dz = z - srcZ;
+        double len = Math.hypot(dx, dz);
+        if (len < 1e-4) { dx = 1; dz = 0; len = 1; }
+        moveAxis(dx / len * knockback, 0, 0);
+        moveAxis(0, 0, dz / len * knockback);
+    }
 
     /** forward/strafe in [-1,1], dt seconds. */
     public void update(double forward, double strafe, double dt) {

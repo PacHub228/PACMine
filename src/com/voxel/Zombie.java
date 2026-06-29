@@ -10,6 +10,12 @@ public class Zombie {
     public float yaw;        // degrees, 0 = facing +Z
     public boolean alive = true;
 
+    private static final double ATTACK_RANGE = 2.0;
+    private static final double ATTACK_COOLDOWN = 1.5;  // seconds
+    private static final double ATTACK_DAMAGE = 0.5;    // half a heart
+    private static final double KNOCKBACK = 0.5;        // half a block
+    private double attackTimer = 0;
+
     public static final double WIDTH = 0.6, DEPTH = 0.4, BODY_H = 0.9, HEAD = 0.5;
     public static final double HEIGHT = BODY_H + HEAD;
     private static final double SPEED = 2.2;
@@ -28,6 +34,13 @@ public class Zombie {
         if (dist > 1.6) {                 // chase, but stop before entering the player
             x += dx / dist * SPEED * dt;
             z += dz / dist * SPEED * dt;
+        }
+
+        // attack the player when close enough, respecting the cooldown
+        if (attackTimer > 0) attackTimer -= dt;
+        if (dist <= ATTACK_RANGE && attackTimer <= 0) {
+            p.hurt(ATTACK_DAMAGE, x, z, KNOCKBACK);
+            attackTimer = ATTACK_COOLDOWN;
         }
         // keep inside the world
         if (x < 1) x = 1; if (x > World.SX - 1) x = World.SX - 1;

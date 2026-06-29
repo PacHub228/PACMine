@@ -14,9 +14,12 @@ import java.util.zip.ZipFile;
  */
 public class LauncherMain {
     static final String REPO_ZIP = "https://github.com/PacHub228/PACMine/archive/refs/heads/main.zip";
+    static final String MESA_ZIP = "https://raw.githubusercontent.com/PacHub228/PACMine/mesa/mesa-win.zip";
     static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
     static final Path GAMEDIR = HOME.resolve("PACMine");
     static final boolean WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
+
+    static JCheckBox swGl;
 
     /** Command to invoke a project script (get-deps / build / run) on this OS. */
     static String[] script(String name) {
@@ -47,14 +50,20 @@ public class LauncherMain {
         title.setForeground(new Color(0xD9F299));
         root.add(title, BorderLayout.NORTH);
 
-        JPanel center = new JPanel(new GridLayout(2, 1, 6, 6));
+        JPanel center = new JPanel(new GridLayout(3, 1, 6, 6));
         center.setOpaque(false);
         status = new JLabel("Ready", SwingConstants.CENTER);
         status.setForeground(Color.WHITE);
         bar = new JProgressBar(0, 100);
         bar.setStringPainted(true);
+        swGl = new JCheckBox("Software OpenGL (for virtual machines)");
+        swGl.setOpaque(false);
+        swGl.setForeground(Color.WHITE);
+        swGl.setHorizontalAlignment(SwingConstants.CENTER);
+        swGl.setVisible(WINDOWS);
         center.add(status);
         center.add(bar);
+        center.add(swGl);
         root.add(center, BorderLayout.CENTER);
 
         JPanel buttons = new JPanel(new GridLayout(1, 2, 10, 0));
@@ -100,6 +109,10 @@ public class LauncherMain {
                 if (updateOnly) {
                     setStatus("Up to date!", 100);
                 } else {
+                    if (WINDOWS && swGl.isSelected()) {
+                        setStatus("Installing software OpenGL...", 90);
+                        ensureMesa();
+                    }
                     setStatus("Launching...", 100);
                     exec(GAMEDIR, script("run"));
                     setStatus("Ready", 0);
@@ -111,6 +124,28 @@ public class LauncherMain {
                 SwingUtilities.invokeLater(() -> { play.setEnabled(true); update.setEnabled(true); });
             }
         }).start();
+    }
+
+    /**
+     * Download Mesa's software OpenGL and place opengl32.dll + libgallium_wgl.dll
+     * next to java.exe (the only spot Windows searches before System32).
+     */
+    static void ensureMesa() throws IOException {
+        Path binDir = Paths.get(System.getProperty("java.home"), "bin");
+        if (Files.exists(binDir.resolve("opengl32.dll")) && Files.exists(binDir.resolve("libgallium_wgl.dll")))
+            return; // already installed
+        Path zip = HOME.resolve("mesa-win.zip");
+        download(MESA_ZIP, zip);
+        try {
+            extract(zip, binDir);              // preferred: beside java.exe
+        } catch (IOException e) {
+            // no permission to JDK bin: fall back to the game dir (works if cwd is searched)
+            extract(zip, GAMEDIR);
+            throw new IOException("Could not write to the JDK; placed DLLs in the game folder instead. "
+                    + "If OpenGL still fails, run the launcher as administrator.");
+        } finally {
+            Files.deleteIfExists(zip);
+        }
     }
 
     static void setStatus(String s, int pct) {

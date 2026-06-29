@@ -57,3 +57,6 @@ A small Swing launcher downloads, builds and runs the latest version from GitHub
   - `Zombie.java` — mob entity & AI
   - `Font5x7.java` — bitmap font for menu text
 - `assets/` — PNG textures (16×16)
+
+## License
+[MIT](LICENSE)

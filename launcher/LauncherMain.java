@@ -109,12 +109,18 @@ public class LauncherMain {
                 if (updateOnly) {
                     setStatus("Up to date!", 100);
                 } else {
+                    java.util.Map<String, String> env = null;
                     if (WINDOWS && swGl.isSelected()) {
                         setStatus("Installing software OpenGL...", 90);
                         ensureMesa();
+                        // stabilise the Mesa software renderer inside VMs
+                        env = new java.util.HashMap<>();
+                        env.put("GALLIUM_DRIVER", "llvmpipe");
+                        env.put("LP_NUM_THREADS", "1");
+                        env.put("MESA_GL_VERSION_OVERRIDE", "2.1");
                     }
                     setStatus("Launching...", 100);
-                    exec(GAMEDIR, script("run"));
+                    exec(GAMEDIR, env, script("run"));
                     setStatus("Ready", 0);
                 }
             } catch (Exception ex) {
@@ -180,7 +186,13 @@ public class LauncherMain {
     }
 
     static void exec(Path dir, String... cmd) throws IOException, InterruptedException {
+        exec(dir, null, cmd);
+    }
+
+    static void exec(Path dir, java.util.Map<String, String> env, String... cmd)
+            throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile()).inheritIO();
+        if (env != null) pb.environment().putAll(env);
         Process p = pb.start();
         int code = p.waitFor();
         if (code != 0) throw new IOException(cmd[cmd.length - 1] + " failed (exit " + code + ")");

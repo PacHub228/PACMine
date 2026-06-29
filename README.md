@@ -24,13 +24,26 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 | Back to menu | `Esc` |
 
 ## Build & run
-Requires a JDK (21+) and Linux x64 (for the bundled LWJGL natives).
+Requires a JDK (21+). LWJGL natives are fetched for your OS.
 
+**Linux / macOS:**
 ```bash
 bash get-deps.sh   # download LWJGL jars into lib/
 bash build.sh      # compile to out/
 bash run.sh        # launch the game
 ```
+
+**Windows:**
+```bat
+get-deps.bat
+build.bat
+run.bat
+```
+
+## Launcher
+A small Swing launcher downloads, builds and runs the latest version from GitHub:
+- Linux/macOS: `cd launcher && ./launcher.sh`
+- Windows: `cd launcher && launcher.bat`
 
 ## Project layout
 - `src/com/voxel/` — game source

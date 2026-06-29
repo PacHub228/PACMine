@@ -16,6 +16,13 @@ public class LauncherMain {
     static final String REPO_ZIP = "https://github.com/PacHub228/PACMine/archive/refs/heads/main.zip";
     static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
     static final Path GAMEDIR = HOME.resolve("PACMine");
+    static final boolean WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
+
+    /** Command to invoke a project script (get-deps / build / run) on this OS. */
+    static String[] script(String name) {
+        return WINDOWS ? new String[]{"cmd", "/c", name + ".bat"}
+                       : new String[]{"bash", name + ".sh"};
+    }
 
     static JLabel status;
     static JProgressBar bar;
@@ -86,15 +93,15 @@ public class LauncherMain {
                     }
                     Files.deleteIfExists(zip);
                     setStatus("Fetching libraries...", 60);
-                    exec(GAMEDIR, "bash", "get-deps.sh");
+                    exec(GAMEDIR, script("get-deps"));
                     setStatus("Compiling...", 80);
-                    exec(GAMEDIR, "bash", "build.sh");
+                    exec(GAMEDIR, script("build"));
                 }
                 if (updateOnly) {
                     setStatus("Up to date!", 100);
                 } else {
                     setStatus("Launching...", 100);
-                    exec(GAMEDIR, "bash", "run.sh");
+                    exec(GAMEDIR, script("run"));
                     setStatus("Ready", 0);
                 }
             } catch (Exception ex) {

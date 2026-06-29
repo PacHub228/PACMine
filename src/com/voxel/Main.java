@@ -28,8 +28,18 @@ public class Main {
     private boolean firstMouse = true;
 
     // UI state
-    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS }
+    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS, MP, JOIN }
     private String selectedWorld = null;
+
+    // multiplayer
+    private boolean multiplayer = false, isHost = false, connecting = false;
+    private NetServer server;
+    private NetClient client;
+    private int myId = 0;
+    private final java.util.concurrent.ConcurrentLinkedQueue<NetEvent> netQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.Map<Integer, double[]> remotePlayers = new java.util.HashMap<>(); // id -> {x,y,z,yaw,pitch}
+    private final StringBuilder ipInput = new StringBuilder("localhost");
+    private double moveSendTimer = 0;
     private boolean inMenu = true;
     private Screen screen = Screen.MAIN;
     private boolean paused = false;        // in-game pause overlay
@@ -56,6 +66,7 @@ public class Main {
     // zombies
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
     private int zHeadFront, zHead, zBody;
+    private int pHeadFront, pHead, pBody;   // remote player textures
 
     // hearts / health
     private int heartFull, heartHalf;
@@ -91,6 +102,13 @@ public class Main {
             if (inMenu || paused) return;
             selectedSlot = (selectedSlot - (int) Math.signum(dy) + hotbar.length) % hotbar.length;
         });
+        glfwSetCharCallback(window, (w, cp) -> {
+            if (inMenu && screen == Screen.JOIN && cp < 128) {
+                char ch = (char) cp;
+                if (Character.isLetterOrDigit(ch) || ch == '.' || ch == ':' || ch == '-')
+                    ipInput.append(ch);
+            }
+        });
 
         // center window
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -120,6 +138,9 @@ public class Main {
         zBody      = TextureAtlas.loadStandalone("assets/zombie.png");
         heartFull  = TextureAtlas.loadStandalone("assets/heart_all.png");
         heartHalf  = TextureAtlas.loadStandalone("assets/heart_noneall.png");
+        pHeadFront = TextureAtlas.loadStandalone("assets/player_head_pered.png");
+        pHead      = TextureAtlas.loadStandalone("assets/player_head.png");
+        pBody      = TextureAtlas.loadStandalone("assets/player.png");
         updateTitle();
     }
 
@@ -181,6 +202,90 @@ public class Main {
 
     private void enterGame() { inMenu = false; paused = false; grabCursor(); }
 
+    // ---------- multiplayer ----------
+    private void hostGame() {
+        world = new World(System.nanoTime(), newChunks, protection);
+        renderer = new ChunkRenderer(world, atlas);
+        spawnX = world.sx / 2; spawnZ = world.sz / 2;
+        int sy = World.SY - 1;
+        while (sy > 0) {
+            byte b = world.get(spawnX, sy, spawnZ);
+            if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
+            sy--;
+        }
+        spawnY = sy + 1;
+        player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
+        player.creative = creativeMode; player.borderWalls = protection;
+        hasSword = false; logsBroken = 0;
+        zombies.clear();                 // mobs disabled in multiplayer v1
+        remotePlayers.clear(); netQueue.clear();
+        multiplayer = true; isHost = true; myId = 0; worldName = null;
+        try {
+            server = new NetServer(world, protection, netQueue);
+            server.start();
+            enterGame();
+        } catch (IOException e) {
+            System.err.println("host failed: " + e.getMessage());
+            multiplayer = false;
+        }
+    }
+
+    private void joinGame(String ip) {
+        try {
+            remotePlayers.clear(); netQueue.clear();
+            client = new NetClient(ip, NetServer.PORT, netQueue);
+            multiplayer = true; isHost = false; connecting = true;
+            // world + player are built when the WORLD event arrives
+        } catch (IOException e) {
+            System.err.println("join failed: " + e.getMessage());
+            multiplayer = false; connecting = false;
+        }
+    }
+
+    private void processNetEvents() {
+        NetEvent e;
+        while ((e = netQueue.poll()) != null) {
+            switch (e.type) {
+                case NetEvent.WORLD:
+                    world = new World(e.chunks, e.blocks);
+                    renderer = new ChunkRenderer(world, atlas);
+                    protection = e.protection;
+                    spawnX = world.sx / 2; spawnZ = world.sz / 2;
+                    int sy = World.SY - 1;
+                    while (sy > 0 && !world.isSolid(spawnX, sy, spawnZ)) sy--;
+                    spawnY = sy + 1;
+                    player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
+                    player.borderWalls = protection;
+                    myId = client != null ? client.myId : 0;
+                    connecting = false;
+                    enterGame();
+                    break;
+                case NetEvent.BLOCK:
+                    if (world != null) { world.set(e.x, e.y, e.z, e.b); renderer.markDirty(e.x, e.z); }
+                    break;
+                case NetEvent.MOVE:
+                    remotePlayers.put(e.id, new double[]{e.px, e.py, e.pz, e.yaw, e.pitch});
+                    break;
+                case NetEvent.LEAVE:
+                    remotePlayers.remove(e.id);
+                    break;
+            }
+        }
+    }
+
+    private void netBlock(int x, int y, int z, byte b) {
+        if (!multiplayer) return;
+        if (isHost && server != null) server.hostBlock(x, y, z, b);
+        else if (client != null) client.sendBlock(x, y, z, b);
+    }
+
+    private void leaveMultiplayer() {
+        if (server != null) { server.stop(); server = null; }
+        if (client != null) { client.close(); client = null; }
+        multiplayer = false; isHost = false; connecting = false;
+        remotePlayers.clear(); netQueue.clear();
+    }
+
     /** Respawn the player in the current world after death (world is kept). */
     private void resetPlayer() {
         // recompute a safe surface height at the spawn column
@@ -212,6 +317,7 @@ public class Main {
             if (inMenu) {
                 if (screen == Screen.MAIN) glfwSetWindowShouldClose(w, true);
                 else if (screen == Screen.CREATE || screen == Screen.WORLD_MENU) screen = Screen.WORLDS;
+                else if (screen == Screen.JOIN) screen = Screen.MP;
                 else screen = Screen.MAIN;
             } else {
                 // toggle the in-game pause menu
@@ -221,7 +327,12 @@ public class Main {
             }
             return;
         }
-        if (action == GLFW_PRESS && key >= GLFW_KEY_1 && key <= GLFW_KEY_9) {
+        if (inMenu && screen == Screen.JOIN && action == GLFW_PRESS) {
+            if (key == GLFW_KEY_BACKSPACE && ipInput.length() > 0) ipInput.deleteCharAt(ipInput.length() - 1);
+            else if (key == GLFW_KEY_ENTER) joinGame(ipInput.toString().trim());
+            return;
+        }
+        if (!inMenu && action == GLFW_PRESS && key >= GLFW_KEY_1 && key <= GLFW_KEY_9) {
             int slot = key - GLFW_KEY_1;
             if (slot < hotbar.length) selectedSlot = slot;
         }
@@ -311,11 +422,13 @@ public class Main {
                     if (px >= 0 && !world.isSolid(px, py, pz)) {
                         world.set(px, py, pz, currentBlock());
                         renderer.markDirty(px, pz);
+                        netBlock(px, py, pz, currentBlock());
                     }
                 } else if (world.get(bx, by, bz) != World.BEDROCK) {
                     byte broken = world.get(bx, by, bz);
                     world.set(bx, by, bz, World.AIR);
                     renderer.markDirty(bx, bz);
+                    netBlock(bx, by, bz, World.AIR);
                     if (broken == World.WOOD && !hasSword) {
                         logsBroken++;
                         if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
@@ -335,6 +448,8 @@ public class Main {
             double dt = Math.min(now - last, 0.05);
             last = now;
 
+            processNetEvents();   // apply incoming world/block/move updates
+
             if (inMenu) {
                 renderMenu();
                 glfwSwapBuffers(window);
@@ -344,7 +459,8 @@ public class Main {
 
             if (!paused) {
                 handleMovement(dt);
-                for (Zombie z : zombies) z.update(player, dt);
+                if (!multiplayer) for (Zombie z : zombies) z.update(player, dt);
+                broadcastMove(dt);
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
@@ -355,7 +471,8 @@ public class Main {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
             renderer.render();
-            renderZombies();
+            if (!multiplayer) renderZombies();
+            renderRemotePlayers();
             drawHud();
             if (paused) drawPauseMenu();
 
@@ -378,6 +495,39 @@ public class Main {
     }
 
     private boolean key(int k) { return glfwGetKey(window, k) == GLFW_PRESS; }
+
+    /** Send our position to the network ~20 times per second. */
+    private void broadcastMove(double dt) {
+        if (!multiplayer) return;
+        moveSendTimer += dt;
+        if (moveSendTimer < 0.05) return;
+        moveSendTimer = 0;
+        if (isHost && server != null) server.hostMoved(player.x, player.y, player.z, player.yaw, player.pitch);
+        else if (client != null) client.sendMove(player.x, player.y, player.z, player.yaw, player.pitch);
+    }
+
+    /** Draw every other connected player as a simple two-box figure. */
+    private void renderRemotePlayers() {
+        if (!multiplayer || remotePlayers.isEmpty()) return;
+        glDisable(GL_CULL_FACE);
+        glColor3f(1, 1, 1);
+        for (java.util.Map.Entry<Integer, double[]> en : remotePlayers.entrySet()) {
+            if (en.getKey() == myId) continue;
+            double[] p = en.getValue();
+            glPushMatrix();
+            glTranslatef((float) p[0], (float) p[1], (float) p[2]);
+            glRotatef((float) p[3] + 180, 0, 1, 0); // front (+Z) faces the player's look direction
+            // body
+            double[] body = {-0.3, 0, -0.2, 0.3, 1.2, 0.2};
+            bindBox(pBody, body, -1);
+            // head: 5 faces + front face texture
+            double[] head = {-0.25, 1.18, -0.25, 0.25, 1.7, 0.25};
+            bindBox(pHead, head, 0);
+            bindFront(pHeadFront, head);
+            glPopMatrix();
+        }
+        glEnable(GL_CULL_FACE);
+    }
 
     private void setupCamera() {
         glMatrixMode(GL_PROJECTION);
@@ -548,10 +698,11 @@ public class Main {
         float bw = 320, bh = 52, cx = width / 2f, y = height * 0.26f + i * 64;
         return new float[]{cx - bw/2, y, cx + bw/2, y + bh};
     }
-    private float[] playRect()     { return menuRect(0); }
-    private float[] creditsRect()  { return menuRect(1); }
-    private float[] quitRect()     { return menuRect(2); }
-    private float[] backRect()     { return menuRect(6); }
+    private float[] playRect()        { return menuRect(0); }
+    private float[] multiplayerRect()  { return menuRect(1); }
+    private float[] creditsRect()     { return menuRect(2); }
+    private float[] quitRect()        { return menuRect(3); }
+    private float[] backRect()        { return menuRect(6); }
 
     private boolean inRect(float[] r, double px, double py) {
         return px >= r[0] && px <= r[2] && py >= r[1] && py <= r[3];
@@ -561,8 +712,18 @@ public class Main {
         switch (screen) {
             case MAIN:
                 if (inRect(playRect(), mouseX, mouseY)) { worldList = SaveGame.list(); screen = Screen.WORLDS; }
+                else if (inRect(multiplayerRect(), mouseX, mouseY)) screen = Screen.MP;
                 else if (inRect(creditsRect(), mouseX, mouseY)) screen = Screen.CREDITS;
                 else if (inRect(quitRect(), mouseX, mouseY)) glfwSetWindowShouldClose(window, true);
+                break;
+            case MP:
+                if (inRect(menuRect(0), mouseX, mouseY)) hostGame();
+                else if (inRect(menuRect(1), mouseX, mouseY)) screen = Screen.JOIN;
+                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
+                break;
+            case JOIN:
+                if (inRect(menuRect(2), mouseX, mouseY)) joinGame(ipInput.toString().trim());
+                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MP;
                 break;
             case WORLDS:
                 for (int i = 0; i < worldList.size(); i++)
@@ -599,10 +760,12 @@ public class Main {
     private void pauseClick() {
         if (inRect(menuRect(0), mouseX, mouseY)) {                 // continue
             paused = false; grabCursor();
-        } else if (inRect(menuRect(1), mouseX, mouseY)) {          // save world
-            try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
-        } else if (inRect(menuRect(2), mouseX, mouseY)) {          // save and quit to menu
-            try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+        } else if (inRect(menuRect(1), mouseX, mouseY)) {          // save world (single-player only)
+            if (!multiplayer)
+                try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+        } else if (inRect(menuRect(2), mouseX, mouseY)) {          // (save and) quit to menu
+            if (multiplayer) leaveMultiplayer();
+            else try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
             paused = false; inMenu = true; screen = Screen.MAIN;
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
@@ -626,6 +789,8 @@ public class Main {
             case WORLD_MENU: title = selectedWorld; break;
             case CREATE: title = "NEW WORLD"; break;
             case CREDITS: title = "CREDITS"; break;
+            case MP: title = "MULTIPLAYER"; break;
+            case JOIN: title = "JOIN GAME"; break;
             default: title = "PACMINE";
         }
         float ts = 9;
@@ -634,9 +799,23 @@ public class Main {
 
         switch (screen) {
             case MAIN:
-                drawButton(playRect(),    "PLAY", 0.25f, 0.6f, 0.3f);
-                drawButton(creditsRect(), "CREDITS", 0.45f, 0.4f, 0.55f);
-                drawButton(quitRect(),    "QUIT", 0.6f, 0.25f, 0.25f);
+                drawButton(playRect(),        "PLAY", 0.25f, 0.6f, 0.3f);
+                drawButton(multiplayerRect(), "MULTIPLAYER", 0.3f, 0.45f, 0.6f);
+                drawButton(creditsRect(),     "CREDITS", 0.45f, 0.4f, 0.55f);
+                drawButton(quitRect(),        "QUIT", 0.6f, 0.25f, 0.25f);
+                break;
+            case MP:
+                drawButton(menuRect(0), "HOST GAME", 0.25f, 0.6f, 0.3f);
+                drawButton(menuRect(1), "JOIN GAME", 0.3f, 0.45f, 0.6f);
+                drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
+                break;
+            case JOIN:
+                glColor3f(0.9f, 0.9f, 0.95f);
+                String prompt = connecting ? "CONNECTING..." : "ENTER HOST IP";
+                Font5x7.draw(prompt, width/2f - Font5x7.width(prompt, 4)/2, height * 0.26f, 4);
+                drawButton(menuRect(1), ipInput.toString().toUpperCase(), 0.2f, 0.2f, 0.25f);
+                drawButton(menuRect(2), "CONNECT", 0.25f, 0.6f, 0.3f);
+                drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
                 break;
             case WORLDS:
                 for (int i = 0; i < worldList.size(); i++)

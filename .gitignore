@@ -1,5 +1,6 @@
 # build output
 out/
+launcher/out/
 
 # downloaded LWJGL jars (run get-deps.sh to fetch)
 lib/*.jar

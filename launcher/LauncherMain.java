@@ -1,0 +1,153 @@
+import javax.swing.*;
+import java.awt.*;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.file.*;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+/**
+ * PACMine launcher: downloads the latest game from GitHub, fetches LWJGL,
+ * compiles it and runs it. Single-file Swing app.
+ */
+public class LauncherMain {
+    static final String REPO_ZIP = "https://github.com/PacHub228/PACMine/archive/refs/heads/main.zip";
+    static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
+    static final Path GAMEDIR = HOME.resolve("PACMine");
+
+    static JLabel status;
+    static JProgressBar bar;
+    static JButton play, update;
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(LauncherMain::buildUi);
+    }
+
+    static void buildUi() {
+        JFrame f = new JFrame("PACMine Launcher");
+        f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        f.setSize(460, 240);
+        f.setLocationRelativeTo(null);
+
+        JPanel root = new JPanel(new BorderLayout(10, 10));
+        root.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
+        root.setBackground(new Color(0x20242E));
+
+        JLabel title = new JLabel("PACMINE", SwingConstants.CENTER);
+        title.setFont(new Font("Monospaced", Font.BOLD, 36));
+        title.setForeground(new Color(0xD9F299));
+        root.add(title, BorderLayout.NORTH);
+
+        JPanel center = new JPanel(new GridLayout(2, 1, 6, 6));
+        center.setOpaque(false);
+        status = new JLabel("Ready", SwingConstants.CENTER);
+        status.setForeground(Color.WHITE);
+        bar = new JProgressBar(0, 100);
+        bar.setStringPainted(true);
+        center.add(status);
+        center.add(bar);
+        root.add(center, BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new GridLayout(1, 2, 10, 0));
+        buttons.setOpaque(false);
+        update = new JButton("UPDATE");
+        play = new JButton("PLAY");
+        play.setFont(new Font("SansSerif", Font.BOLD, 16));
+        update.addActionListener(e -> run(true));
+        play.addActionListener(e -> run(false));
+        buttons.add(update);
+        buttons.add(play);
+        root.add(buttons, BorderLayout.SOUTH);
+
+        f.setContentPane(root);
+        f.setVisible(true);
+    }
+
+    /** updateOnly=true: just fetch/build. false: also launch the game. */
+    static void run(boolean updateOnly) {
+        play.setEnabled(false); update.setEnabled(false);
+        new Thread(() -> {
+            try {
+                boolean installed = Files.exists(GAMEDIR.resolve("src/com/voxel/Main.java"));
+                if (updateOnly || !installed) {
+                    setStatus("Downloading game...", 5);
+                    Path zip = HOME.resolve("game.zip");
+                    Files.createDirectories(HOME);
+                    download(REPO_ZIP, zip);
+                    setStatus("Extracting...", 45);
+                    extract(zip, HOME);
+                    // GitHub names the folder PACMine-main; move it into place
+                    Path extracted = HOME.resolve("PACMine-main");
+                    if (Files.exists(extracted)) {
+                        deleteDir(GAMEDIR);
+                        Files.move(extracted, GAMEDIR);
+                    }
+                    Files.deleteIfExists(zip);
+                    setStatus("Fetching libraries...", 60);
+                    exec(GAMEDIR, "bash", "get-deps.sh");
+                    setStatus("Compiling...", 80);
+                    exec(GAMEDIR, "bash", "build.sh");
+                }
+                if (updateOnly) {
+                    setStatus("Up to date!", 100);
+                } else {
+                    setStatus("Launching...", 100);
+                    exec(GAMEDIR, "bash", "run.sh");
+                    setStatus("Ready", 0);
+                }
+            } catch (Exception ex) {
+                setStatus("Error: " + ex.getMessage(), 0);
+                ex.printStackTrace();
+            } finally {
+                SwingUtilities.invokeLater(() -> { play.setEnabled(true); update.setEnabled(true); });
+            }
+        }).start();
+    }
+
+    static void setStatus(String s, int pct) {
+        SwingUtilities.invokeLater(() -> { status.setText(s); bar.setValue(pct); });
+    }
+
+    static void download(String url, Path dest) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "PACMine-Launcher");
+        try (InputStream in = c.getInputStream()) {
+            Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    static void extract(Path zip, Path destDir) throws IOException {
+        try (ZipFile zf = new ZipFile(zip.toFile())) {
+            Enumeration<? extends ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry e = en.nextElement();
+                Path out = destDir.resolve(e.getName()).normalize();
+                if (!out.startsWith(destDir)) continue; // zip-slip guard
+                if (e.isDirectory()) Files.createDirectories(out);
+                else {
+                    Files.createDirectories(out.getParent());
+                    try (InputStream in = zf.getInputStream(e)) {
+                        Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
+    }
+
+    static void exec(Path dir, String... cmd) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(cmd).directory(dir.toFile()).inheritIO();
+        Process p = pb.start();
+        int code = p.waitFor();
+        if (code != 0) throw new IOException(cmd[cmd.length - 1] + " failed (exit " + code + ")");
+    }
+
+    static void deleteDir(Path dir) throws IOException {
+        if (!Files.exists(dir)) return;
+        try (var walk = Files.walk(dir)) {
+            walk.sorted((a, b) -> b.compareTo(a)).forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+        }
+    }
+}

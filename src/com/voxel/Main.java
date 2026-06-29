@@ -222,14 +222,9 @@ public class Main {
                     byte broken = world.get(bx, by, bz);
                     world.set(bx, by, bz, World.AIR);
                     renderer.markDirty(bx, bz);
-                    System.out.println("broke block id=" + broken + "  (WOOD=" + World.WOOD + ")  logs=" + logsBroken);
                     if (broken == World.WOOD && !hasSword) {
                         logsBroken++;
-                        if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) {
-                            hasSword = true;
-                            System.out.println("You crafted a SWORD!");
-                        }
-                        updateTitle();
+                        if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
                     }
                 }
                 return;
@@ -509,11 +504,7 @@ public class Main {
     }
 
     private void updateTitle() {
-        int trees = logsBroken / LOGS_PER_TREE;
-        String s = hasSword
-            ? "PACMine  —  SWORD acquired!"
-            : "PACMine  —  Trees chopped: " + trees + "/" + TREES_NEEDED;
-        glfwSetWindowTitle(window, s);
+        glfwSetWindowTitle(window, "PACMine");
     }
 
     public static void main(String[] args) { new Main().run(); }

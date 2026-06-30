@@ -9,16 +9,16 @@ public class Zombie {
     public double x, y, z;   // feet position (centre on x/z)
     public float yaw;        // degrees, 0 = facing +Z
     public boolean alive = true;
+    public boolean combat = false;          // Super mode: armed, strafing, fast
+    private double phase = Math.random() * Math.PI * 2;
 
     private static final double ATTACK_RANGE = 2.0;
-    private static final double ATTACK_COOLDOWN = 1.5;  // seconds
-    private static final double ATTACK_DAMAGE = 0.5;    // half a heart
-    private static final double KNOCKBACK = 0.5;        // half a block
     private double attackTimer = 0;
 
     public static final double WIDTH = 0.6, DEPTH = 0.4, BODY_H = 0.9, HEAD = 0.5;
     public static final double HEIGHT = BODY_H + HEAD;
     private static final double SPEED = 2.2;
+    private static final double COMBAT_SPEED = 4.3;   // player-like
 
     private final World world;
 
@@ -31,17 +31,33 @@ public class Zombie {
         double dist = Math.hypot(dx, dz);
         if (dist > 1e-3) yaw = (float) Math.toDegrees(Math.atan2(dx, dz));
 
-        if (dist > 1.6) {                 // chase, but stop before entering the player
+        if (combat) {
+            // strafe around the player like a duelling player
+            phase += dt * 2.2;
+            double nx = dist > 1e-3 ? dx / dist : 0, nz = dist > 1e-3 ? dz / dist : 0;
+            double perpx = -nz, perpz = nx;
+            double approach, strafe;
+            if (dist > 4.5)      { approach = 1.0; strafe = 0.15; } // far: charge straight in
+            else if (dist > 2.0) { approach = 0.7; strafe = 0.6;  } // mid: close while weaving
+            else                 { approach = -0.25; strafe = 1.0; } // close: back off & circle
+            strafe *= Math.sin(phase);
+            double mx = nx * approach + perpx * strafe;
+            double mz = nz * approach + perpz * strafe;
+            double ml = Math.hypot(mx, mz);
+            if (ml > 1e-3) { x += mx / ml * COMBAT_SPEED * dt; z += mz / ml * COMBAT_SPEED * dt; }
+        } else if (dist > 1.6) {           // normal zombie: straight chase
             x += dx / dist * SPEED * dt;
             z += dz / dist * SPEED * dt;
         }
 
         // attack the player when close enough, respecting the cooldown
+        double cooldown = combat ? 0.9 : 1.5;
+        double damage = combat ? 1.0 : 0.5;
         if (attackTimer > 0) attackTimer -= dt;
-        boolean sameLevel = Math.abs(p.y - y) < 1.5;   // not stacked a block apart vertically
+        boolean sameLevel = Math.abs(p.y - y) < 1.5;
         if (dist <= ATTACK_RANGE && sameLevel && attackTimer <= 0) {
-            p.hurt(ATTACK_DAMAGE, x, z, KNOCKBACK);
-            attackTimer = ATTACK_COOLDOWN;
+            p.hurt(damage, x, z, 0.5);
+            attackTimer = cooldown;
         }
         // keep inside the world
         if (x < 1) x = 1; if (x > world.sx - 1) x = world.sx - 1;

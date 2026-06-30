@@ -57,7 +57,9 @@ public class Main {
     // settings (used when creating a world)
     private boolean hostileMobs = true;
     private boolean creativeMode = false;   // false = survival
+    private boolean superMode = false;       // wave-survival arena
     private boolean protection = true;       // bedrock + edge barrier
+    private int wave = 0; private double waveTimer = 0;
     private boolean breakHeld, placeHeld;
     // hotbar inventory
     private final byte[] hotbar = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL, World.IRON };
@@ -196,8 +198,10 @@ public class Main {
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode;
         player.borderWalls = protection;
-        hasSword = false; logsBroken = 0;
-        zombies.clear();   // zombies now spawn at night (see manageZombies)
+        hasSword = superMode;                  // Super gives the sword immediately
+        logsBroken = 0;
+        zombies.clear();
+        wave = 0; waveTimer = 0;               // waves start ~5s after spawn (manageWaves)
         worldName = SaveGame.nextName();
         try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
         enterGame();
@@ -355,14 +359,30 @@ public class Main {
         }
     }
 
-    private void spawnZombieNear() {
+    private void spawnZombieNear() { spawnZombieNear(false); }
+    private void spawnZombieNear(boolean combat) {
         double ang = Math.random() * Math.PI * 2, dist = 16 + Math.random() * 14;
         int zx = (int) (player.x + Math.cos(ang) * dist);
         int zz = (int) (player.z + Math.sin(ang) * dist);
         if (!world.inBounds(zx, 0, zz)) return;
         int sy = World.SY - 1;
         while (sy > 0 && !world.isSolid(zx, sy, zz)) sy--;
-        zombies.add(new Zombie(world, zx + 0.5, sy + 1, zz + 0.5));
+        Zombie z = new Zombie(world, zx + 0.5, sy + 1, zz + 0.5);
+        z.combat = combat;
+        zombies.add(z);
+    }
+
+    /** Super mode: timed waves of fast, strafing, armed zombies. */
+    private void manageWaves(double dt) {
+        if (!zombies.isEmpty()) return;          // wait until the wave is cleared
+        waveTimer += dt;
+        double delay = (wave == 0) ? 5.0 : 3.0;  // first wave after 5s
+        if (waveTimer >= delay) {
+            waveTimer = 0;
+            wave++;
+            int n = 2 + wave * 2;                 // growing waves
+            for (int i = 0; i < n; i++) spawnZombieNear(true);
+        }
     }
 
     private void spawnZombies(int n, int cx, int cz) {
@@ -594,7 +614,10 @@ public class Main {
 
             if (!paused && !inventoryOpen) {
                 handleMovement(dt);
-                if (!multiplayer) { manageZombies(dt); for (Zombie z : zombies) z.update(player, dt); }
+                if (!multiplayer) {
+                    if (superMode) manageWaves(dt); else manageZombies(dt);
+                    for (Zombie z : zombies) z.update(player, dt);
+                }
                 broadcastMove(dt);
                 updateMining(dt);
                 timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
@@ -909,7 +932,7 @@ public class Main {
                 if (inRect(sizeMinusRect(), mouseX, mouseY)) newChunks = Math.max(2, newChunks - 1);
                 else if (inRect(sizePlusRect(), mouseX, mouseY)) newChunks = Math.min(24, newChunks + 1);
                 else if (inRect(menuRect(1), mouseX, mouseY)) hostileMobs = !hostileMobs;
-                else if (inRect(menuRect(2), mouseX, mouseY)) creativeMode = !creativeMode;
+                else if (inRect(menuRect(2), mouseX, mouseY)) cycleMode();
                 else if (inRect(menuRect(3), mouseX, mouseY)) protection = !protection;
                 else if (inRect(menuRect(4), mouseX, mouseY)) newWorld(newChunks);
                 else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
@@ -997,7 +1020,7 @@ public class Main {
             case CREATE:
                 drawButton(menuRect(0), "- SIZE " + newChunks + " +", 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(1), "MOBS  " + onOff(hostileMobs), 0.3f, 0.4f, 0.55f);
-                drawButton(menuRect(2), "MODE  " + (creativeMode ? "CREATIVE" : "SURVIVAL"), 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(2), "MODE  " + modeName(), 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(3), "PROTECT  " + onOff(protection), 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(4), "CREATE", 0.25f, 0.6f, 0.3f);
                 drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
@@ -1027,6 +1050,12 @@ public class Main {
     }
 
     private String onOff(boolean b) { return b ? "ON" : "OFF"; }
+    private String modeName() { return superMode ? "SUPER" : creativeMode ? "CREATIVE" : "SURVIVAL"; }
+    private void cycleMode() {
+        if (!creativeMode && !superMode) { creativeMode = true; superMode = false; }
+        else if (creativeMode) { creativeMode = false; superMode = true; }
+        else { creativeMode = false; superMode = false; }
+    }
 
     private void drawPauseMenu() {
         glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
@@ -1115,7 +1144,8 @@ public class Main {
             "World: " + world.cx + "x" + world.cz + " chunks (" + world.sx + "x" + world.sz + ")",
             "Time: " + clock() + "  " + (night ? "(ночь)" : "(день)"),
             flip,
-            multiplayer ? ("Multiplayer: " + (isHost ? "host" : "client") + ", players " + (remotePlayers.size() + 1)) : "Singleplayer",
+            superMode ? ("SUPER  wave " + wave + ", zombies " + zombies.size())
+                      : (multiplayer ? ("Multiplayer: " + (isHost ? "host" : "client") + ", players " + (remotePlayers.size() + 1)) : "Singleplayer"),
         };
         float sz = 2f, lh = 9 * sz, x = 8, y = 130; // below the sword/progress panel
         glDisable(GL_TEXTURE_2D);

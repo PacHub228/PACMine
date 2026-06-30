@@ -77,6 +77,8 @@ public class Main {
     private double timeOfDay = 0.25;              // 0..1, start at noon
     private boolean showDebug = false;
     private double fps, fpsAccum; private int fpsFrames;
+    private double spawnTimer = 0, burnTimer = 0;
+    private static final int MAX_ZOMBIES = 14;
 
     // sword reward: chop 3 trees (4 logs each) to earn it
     private static final int LOGS_PER_TREE = 4, TREES_NEEDED = 3;
@@ -195,8 +197,7 @@ public class Main {
         player.creative = creativeMode;
         player.borderWalls = protection;
         hasSword = false; logsBroken = 0;
-        zombies.clear();
-        if (hostileMobs) spawnZombies(8, spawnX, spawnZ);
+        zombies.clear();   // zombies now spawn at night (see manageZombies)
         worldName = SaveGame.nextName();
         try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
         enterGame();
@@ -339,7 +340,29 @@ public class Main {
         player.x = spawnX + 0.5; player.y = spawnY; player.z = spawnZ + 0.5;
         player.vy = 0; player.health = Player.MAX_HEARTS;
         zombies.clear();
-        if (hostileMobs) spawnZombies(8, spawnX, spawnZ);
+    }
+
+    /** Spawn zombies at night, burn them off during the day (single-player). */
+    private void manageZombies(double dt) {
+        if (!hostileMobs) { zombies.clear(); return; }
+        if (isNight()) {
+            spawnTimer += dt;
+            if (spawnTimer > 2.5 && zombies.size() < MAX_ZOMBIES) { spawnTimer = 0; spawnZombieNear(); }
+        } else {
+            spawnTimer = 0;
+            burnTimer += dt;                       // daylight: zombies burn up
+            if (burnTimer > 1.2 && !zombies.isEmpty()) { burnTimer = 0; zombies.remove(zombies.size() - 1); }
+        }
+    }
+
+    private void spawnZombieNear() {
+        double ang = Math.random() * Math.PI * 2, dist = 16 + Math.random() * 14;
+        int zx = (int) (player.x + Math.cos(ang) * dist);
+        int zz = (int) (player.z + Math.sin(ang) * dist);
+        if (!world.inBounds(zx, 0, zz)) return;
+        int sy = World.SY - 1;
+        while (sy > 0 && !world.isSolid(zx, sy, zz)) sy--;
+        zombies.add(new Zombie(world, zx + 0.5, sy + 1, zz + 0.5));
     }
 
     private void spawnZombies(int n, int cx, int cz) {
@@ -571,7 +594,7 @@ public class Main {
 
             if (!paused && !inventoryOpen) {
                 handleMovement(dt);
-                if (!multiplayer) for (Zombie z : zombies) z.update(player, dt);
+                if (!multiplayer) { manageZombies(dt); for (Zombie z : zombies) z.update(player, dt); }
                 broadcastMove(dt);
                 updateMining(dt);
                 timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;

@@ -72,6 +72,12 @@ public class Main {
     private int mineX = Integer.MIN_VALUE, mineY, mineZ;
     private double mineProg = 0;
 
+    // day/night cycle + debug overlay
+    private static final double DAY_LENGTH = 480; // seconds for a full day+night
+    private double timeOfDay = 0.25;              // 0..1, start at noon
+    private boolean showDebug = false;
+    private double fps, fpsAccum; private int fpsFrames;
+
     // sword reward: chop 3 trees (4 logs each) to earn it
     private static final int LOGS_PER_TREE = 4, TREES_NEEDED = 3;
     private int logsBroken = 0;
@@ -366,6 +372,7 @@ public class Main {
             else if (key == GLFW_KEY_ENTER) joinGame(ipInput.toString().trim());
             return;
         }
+        if (!inMenu && key == GLFW_KEY_F3 && action == GLFW_PRESS) { showDebug = !showDebug; return; }
         if (!inMenu && key == GLFW_KEY_E && action == GLFW_PRESS) {
             inventoryOpen = !inventoryOpen;
             glfwSetInputMode(w, GLFW_CURSOR, inventoryOpen ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
@@ -464,6 +471,31 @@ public class Main {
         }
     }
 
+    /** Daylight factor 0 (night) .. 1 (full day). */
+    private double light() {
+        double s = Math.sin(timeOfDay * 2 * Math.PI);
+        return Math.max(0, Math.min(1, s * 1.5 + 0.5));
+    }
+    private boolean isNight() { return light() < 0.4; }
+
+    /** Seconds until day/night next flips. */
+    private double secondsUntilFlip() {
+        boolean cur = isNight();
+        for (int i = 1; i <= 1000; i++) {
+            double t = (timeOfDay + i * 0.001) % 1.0;
+            double s = Math.sin(t * 2 * Math.PI);
+            boolean night = (Math.max(0, Math.min(1, s * 1.5 + 0.5))) < 0.4;
+            if (night != cur) return i * 0.001 * DAY_LENGTH;
+        }
+        return 0;
+    }
+    /** Time of day as HH:MM (noon at timeOfDay=0.25). */
+    private String clock() {
+        double h = (timeOfDay * 24 + 6) % 24;
+        int hh = (int) h, mm = (int) ((h - hh) * 60);
+        return String.format("%02d:%02d", hh, mm);
+    }
+
     /** Raycast from the eye: returns {hx,hy,hz, px,py,pz} (hit cell + previous air cell), or null. */
     private int[] raycast() {
         double ex = player.x, ey = player.y + Player.EYE, ez = player.z;
@@ -542,6 +574,7 @@ public class Main {
                 if (!multiplayer) for (Zombie z : zombies) z.update(player, dt);
                 broadcastMove(dt);
                 updateMining(dt);
+                timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
@@ -549,6 +582,13 @@ public class Main {
                 }
             }
 
+            // fps counter
+            fpsAccum += dt; fpsFrames++;
+            if (fpsAccum >= 0.5) { fps = fpsFrames / fpsAccum; fpsAccum = 0; fpsFrames = 0; }
+
+            // sky colour from time of day
+            float lt = (float) light();
+            glClearColor(0.03f + (0.55f - 0.03f) * lt, 0.04f + (0.75f - 0.04f) * lt, 0.10f + (1.0f - 0.10f) * lt, 1f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
             renderer.render();
@@ -633,6 +673,15 @@ public class Main {
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);   // HUD quads are wound the other way; don't cull them
 
+        // night darkening over the world (HUD drawn after stays bright)
+        float nightAlpha = (float) ((1 - light()) * 0.6);
+        if (nightAlpha > 0.01f) {
+            glDisable(GL_TEXTURE_2D);
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glColor4f(0, 0, 0.05f, nightAlpha); quad(0, 0, width, height);
+            glDisable(GL_BLEND);
+        }
+
         // crosshair
         glDisable(GL_TEXTURE_2D);
         glColor3f(1, 1, 1);
@@ -659,6 +708,7 @@ public class Main {
         drawHearts();
         drawHotbar();
         drawNameTags();
+        if (showDebug) drawDebug();
 
         // HUD panel in the TOP-LEFT corner
         float pad = 16, sz = 80;
@@ -1029,6 +1079,29 @@ public class Main {
                 glDisable(GL_TEXTURE_2D);
             }
         }
+    }
+
+    /** F3 debug overlay: world/player info, time of day, next day/night flip. */
+    private void drawDebug() {
+        boolean night = isNight();
+        String flip = (night ? "День через: " : "Ночь через: ") + (int) secondsUntilFlip() + "s";
+        String[] lines = {
+            "PACMINE  " + (int) fps + " fps",
+            String.format("XYZ: %.1f %.1f %.1f", player.x, player.y, player.z),
+            String.format("Facing: yaw %.0f pitch %.0f", player.yaw, player.pitch),
+            "World: " + world.cx + "x" + world.cz + " chunks (" + world.sx + "x" + world.sz + ")",
+            "Time: " + clock() + "  " + (night ? "(ночь)" : "(день)"),
+            flip,
+            multiplayer ? ("Multiplayer: " + (isHost ? "host" : "client") + ", players " + (remotePlayers.size() + 1)) : "Singleplayer",
+        };
+        float sz = 2f, lh = 9 * sz, x = 8, y = 130; // below the sword/progress panel
+        glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glColor4f(0, 0, 0, 0.5f);
+        quad(x - 4, y - 4, x + 320, y + lines.length * lh + 4);
+        glColor3f(0.8f, 1f, 0.7f);
+        for (String ln : lines) { Font5x7.draw(ln, x, y, sz); y += lh; }
+        glDisable(GL_BLEND);
     }
 
     /** Draw nicknames (and a blue premium tick) above remote players. */

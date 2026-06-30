@@ -64,6 +64,14 @@ public class Main {
     private int selectedSlot = 2; // stone
     private byte currentBlock() { return hotbar[selectedSlot]; }
 
+    // inventory: count of each block id; opened with E (9x9 grid)
+    private final int[] inv = new int[16];
+    private boolean inventoryOpen = false;
+
+    // mining (hold to break, time depends on block)
+    private int mineX = Integer.MIN_VALUE, mineY, mineZ;
+    private double mineProg = 0;
+
     // sword reward: chop 3 trees (4 logs each) to earn it
     private static final int LOGS_PER_TREE = 4, TREES_NEEDED = 3;
     private int logsBroken = 0;
@@ -358,6 +366,12 @@ public class Main {
             else if (key == GLFW_KEY_ENTER) joinGame(ipInput.toString().trim());
             return;
         }
+        if (!inMenu && key == GLFW_KEY_E && action == GLFW_PRESS) {
+            inventoryOpen = !inventoryOpen;
+            glfwSetInputMode(w, GLFW_CURSOR, inventoryOpen ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
+            if (!inventoryOpen) firstMouse = true;
+            return;
+        }
         if (!inMenu && action == GLFW_PRESS && key >= GLFW_KEY_1 && key <= GLFW_KEY_9) {
             int slot = key - GLFW_KEY_1;
             if (slot < hotbar.length) selectedSlot = slot;
@@ -374,6 +388,10 @@ public class Main {
             if (down && button == GLFW_MOUSE_BUTTON_LEFT) pauseClick();
             return;
         }
+        if (inventoryOpen) {
+            if (down && button == GLFW_MOUSE_BUTTON_LEFT) inventoryClick();
+            return;
+        }
         // if the cursor ever slipped out of capture, a click re-grabs it
         if (down && glfwGetInputMode(w, GLFW_CURSOR) != GLFW_CURSOR_DISABLED) {
             grabCursor();
@@ -382,10 +400,14 @@ public class Main {
         if (button == GLFW_MOUSE_BUTTON_LEFT)  breakHeld = down;
         if (button == GLFW_MOUSE_BUTTON_RIGHT) placeHeld = down;
         if (down) {
-            boolean place = button == GLFW_MOUSE_BUTTON_RIGHT;
-            // left click with a sword: try to hit a zombie first
-            if (!place && hasSword && attackZombie()) return;
-            editBlock(place);
+            if (button == GLFW_MOUSE_BUTTON_RIGHT) { placeBlock(); return; }
+            // left click: hit a zombie if armed, else (creative) break instantly
+            if (hasSword && attackZombie()) return;
+            if (player.creative) {
+                int[] r = raycast();
+                if (r != null) breakBlock(r[0], r[1], r[2]);
+            }
+            // survival breaking is handled by hold-to-mine in updateMining()
         }
     }
 
@@ -422,48 +444,80 @@ public class Main {
 
     private void onCursor(long w, double xpos, double ypos) {
         mouseX = xpos; mouseY = ypos;
-        if (inMenu || paused) return;
+        if (inMenu || paused || inventoryOpen) return;
         if (firstMouse) { lastX = xpos; lastY = ypos; firstMouse = false; return; }
         double dx = xpos - lastX, dy = ypos - lastY;
         lastX = xpos; lastY = ypos;
         player.addYawPitch((float) (-dx * 0.12), (float) (-dy * 0.12));
     }
 
-    /** DDA raycast from the eye; break the hit block or place against its face. */
-    private void editBlock(boolean place) {
+    /** Seconds needed to mine a block. */
+    private static double mineTime(byte b) {
+        switch (b) {
+            case World.LEAVES: return 0;
+            case World.SAND: case World.DIRT: case World.GRASS: return 1;
+            case World.WOOD: return 2;
+            case World.STONE: return 3;
+            case World.COAL: return 4;
+            case World.IRON: return 5;
+            default: return 2;
+        }
+    }
+
+    /** Raycast from the eye: returns {hx,hy,hz, px,py,pz} (hit cell + previous air cell), or null. */
+    private int[] raycast() {
         double ex = player.x, ey = player.y + Player.EYE, ez = player.z;
         double yr = Math.toRadians(player.yaw), pr = Math.toRadians(player.pitch);
-        double dx = -Math.sin(yr) * Math.cos(pr);
-        double dy = Math.sin(pr);
-        double dz = -Math.cos(yr) * Math.cos(pr);
-
-        int px = -1, py = -1, pz = -1; // previous (air) cell, for placing
-        double t = 0, step = 0.05, max = 6.0;
-        while (t < max) {
-            int bx = (int) Math.floor(ex + dx * t);
-            int by = (int) Math.floor(ey + dy * t);
-            int bz = (int) Math.floor(ez + dz * t);
-            if (world.isSolid(bx, by, bz)) {
-                if (place) {
-                    if (px >= 0 && !world.isSolid(px, py, pz)) {
-                        world.set(px, py, pz, currentBlock());
-                        renderer.markDirty(px, pz);
-                        netBlock(px, py, pz, currentBlock());
-                    }
-                } else if (world.get(bx, by, bz) != World.BEDROCK) {
-                    byte broken = world.get(bx, by, bz);
-                    world.set(bx, by, bz, World.AIR);
-                    renderer.markDirty(bx, bz);
-                    netBlock(bx, by, bz, World.AIR);
-                    if (broken == World.WOOD && !hasSword) {
-                        logsBroken++;
-                        if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
-                    }
-                }
-                return;
-            }
+        double dx = -Math.sin(yr) * Math.cos(pr), dy = Math.sin(pr), dz = -Math.cos(yr) * Math.cos(pr);
+        int px = Integer.MIN_VALUE, py = 0, pz = 0;
+        for (double t = 0; t < 6.0; t += 0.05) {
+            int bx = (int) Math.floor(ex + dx * t), by = (int) Math.floor(ey + dy * t), bz = (int) Math.floor(ez + dz * t);
+            if (world.isSolid(bx, by, bz)) return new int[]{bx, by, bz, px, py, pz};
             px = bx; py = by; pz = bz;
-            t += step;
+        }
+        return null;
+    }
+
+    /** Place the selected hotbar block against the targeted face (consumes inventory in survival). */
+    private void placeBlock() {
+        int[] r = raycast();
+        if (r == null || r[3] == Integer.MIN_VALUE) return;
+        int px = r[3], py = r[4], pz = r[5];
+        if (world.isSolid(px, py, pz)) return;
+        byte b = currentBlock();
+        if (!player.creative) {
+            if (inv[b] <= 0) return;     // nothing to place
+            inv[b]--;
+        }
+        world.set(px, py, pz, b);
+        renderer.markDirty(px, pz);
+        netBlock(px, py, pz, b);
+    }
+
+    /** Break the block at the given cell: drop into inventory + sync. */
+    private void breakBlock(int bx, int by, int bz) {
+        byte broken = world.get(bx, by, bz);
+        if (broken == World.AIR || broken == World.BEDROCK) return;
+        world.set(bx, by, bz, World.AIR);
+        renderer.markDirty(bx, bz);
+        netBlock(bx, by, bz, World.AIR);
+        if (broken >= 0 && broken < inv.length) inv[broken]++;   // store the block
+        if (broken == World.WOOD && !hasSword) {
+            logsBroken++;
+            if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
+        }
+    }
+
+    /** Continuous mining while LMB is held (survival): progress depends on block type. */
+    private void updateMining(double dt) {
+        if (!breakHeld || player.creative || inventoryOpen) { mineX = Integer.MIN_VALUE; mineProg = 0; return; }
+        int[] r = raycast();
+        if (r == null || world.get(r[0], r[1], r[2]) == World.BEDROCK) { mineX = Integer.MIN_VALUE; mineProg = 0; return; }
+        if (r[0] != mineX || r[1] != mineY || r[2] != mineZ) { mineX = r[0]; mineY = r[1]; mineZ = r[2]; mineProg = 0; }
+        mineProg += dt;
+        if (mineProg >= mineTime(world.get(mineX, mineY, mineZ))) {
+            breakBlock(mineX, mineY, mineZ);
+            mineX = Integer.MIN_VALUE; mineProg = 0;
         }
     }
 
@@ -483,10 +537,11 @@ public class Main {
                 continue;
             }
 
-            if (!paused) {
+            if (!paused && !inventoryOpen) {
                 handleMovement(dt);
                 if (!multiplayer) for (Zombie z : zombies) z.update(player, dt);
                 broadcastMove(dt);
+                updateMining(dt);
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
@@ -501,6 +556,7 @@ public class Main {
             renderRemotePlayers();
             drawHud();
             if (paused) drawPauseMenu();
+            if (inventoryOpen) drawInventory();
 
             glfwSwapBuffers(window);
             glfwPollEvents();
@@ -586,6 +642,15 @@ public class Main {
         glVertex2f(cx - s, cy); glVertex2f(cx + s, cy);
         glVertex2f(cx, cy - s); glVertex2f(cx, cy + s);
         glEnd();
+
+        // mining progress bar
+        if (mineX != Integer.MIN_VALUE && mineProg > 0) {
+            double need = mineTime(world.get(mineX, mineY, mineZ));
+            float frac = need <= 0 ? 1f : (float) Math.min(1, mineProg / need);
+            float bw = 80, bh = 8, bx = cx - bw / 2, by = cy + 22;
+            glColor3f(0.2f, 0.2f, 0.2f); quad(bx, by, bx + bw, by + bh);
+            glColor3f(0.4f, 0.85f, 0.4f); quad(bx, by, bx + bw * frac, by + bh);
+        }
         glEnable(GL_TEXTURE_2D);
 
         glEnable(GL_BLEND);
@@ -1024,6 +1089,71 @@ public class Main {
         return new float[]{sx, sy};
     }
 
+    // all block types shown in the inventory grid
+    private static final byte[] ALL_BLOCKS = {
+        World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND,
+        World.COAL, World.IRON
+    };
+    private float invCell = 50, invGap = 6;
+    private float invOriginX() { return width / 2f - (9 * (invCell + invGap) - invGap) / 2; }
+    private float invOriginY() { return height / 2f - (9 * (invCell + invGap) - invGap) / 2; }
+
+    private void inventoryClick() {
+        float ox = invOriginX(), oy = invOriginY();
+        for (int i = 0; i < ALL_BLOCKS.length; i++) {
+            int row = i / 9, col = i % 9;
+            float x = ox + col * (invCell + invGap), y = oy + row * (invCell + invGap);
+            if (mouseX >= x && mouseX <= x + invCell && mouseY >= y && mouseY <= y + invCell) {
+                hotbar[selectedSlot] = ALL_BLOCKS[i];  // put this block into the active hotbar slot
+                return;
+            }
+        }
+    }
+
+    /** 9x9 inventory overlay showing collected blocks and counts (open with E). */
+    private void drawInventory() {
+        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+        glOrtho(0, width, height, 0, -1, 1);
+        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+        glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(0, 0, 0, 0.6f); quad(0, 0, width, height);
+
+        float ox = invOriginX(), oy = invOriginY();
+        float gw = 9 * (invCell + invGap) - invGap, gh = gw;
+        glColor4f(0.16f, 0.18f, 0.24f, 0.97f); quad(ox - 14, oy - 40, ox + gw + 14, oy + gh + 14);
+        glColor3f(0.85f, 0.95f, 0.6f);
+        Font5x7.draw("INVENTORY", ox, oy - 34, 4);
+
+        for (int i = 0; i < 81; i++) {
+            int row = i / 9, col = i % 9;
+            float x = ox + col * (invCell + invGap), y = oy + row * (invCell + invGap);
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(0, 0, 0, 0.4f); quad(x, y, x + invCell, y + invCell);
+            if (i < ALL_BLOCKS.length) {
+                byte b = ALL_BLOCKS[i];
+                glEnable(GL_TEXTURE_2D); atlas.bind();
+                float[] uv = atlas.uv(atlas.tileFor(b, 2));
+                glColor4f(1, 1, 1, 1);
+                float p = 6;
+                glBegin(GL_QUADS);
+                glTexCoord2f(uv[0], uv[1]); glVertex2f(x + p, y + p);
+                glTexCoord2f(uv[2], uv[1]); glVertex2f(x + invCell - p, y + p);
+                glTexCoord2f(uv[2], uv[3]); glVertex2f(x + invCell - p, y + invCell - p);
+                glTexCoord2f(uv[0], uv[3]); glVertex2f(x + p, y + invCell - p);
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+                glColor3f(1, 1, 1);
+                Font5x7.draw(String.valueOf(inv[b]), x + 4, y + invCell - 14, 1.6f);
+            }
+        }
+        glDisable(GL_BLEND);
+        glEnable(GL_TEXTURE_2D); glEnable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST);
+        glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
+    }
+
     /** Hotbar of block slots at the bottom-centre; selected slot is highlighted. */
     private void drawHotbar() {
         int n = hotbar.length;
@@ -1051,6 +1181,9 @@ public class Main {
             glTexCoord2f(uv[0], uv[3]); glVertex2f(sx + pad, y0 + slot - pad);
             glEnd();
             glDisable(GL_TEXTURE_2D);
+            // count in the corner
+            glColor3f(1, 1, 1);
+            Font5x7.draw(String.valueOf(inv[hotbar[i]]), sx + 4, y0 + slot - 14, 1.5f);
         }
     }
 

@@ -42,6 +42,9 @@ build.bat
 run.bat
 ```
 
+> ⚠️ **The Windows build is unverified and may have issues.** All versions are
+> tested on **Linux Fedora 44 Workstation**.
+
 ## Launcher
 A small Swing launcher downloads, builds and runs the latest version from GitHub:
 - Linux/macOS: `cd launcher && ./launcher.sh`

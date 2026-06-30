@@ -20,17 +20,19 @@ import java.util.zip.ZipFile;
 public class LauncherMain {
     static final String REPO = "PacHub228/PACMine";
     static final String MESA_ZIP = "https://raw.githubusercontent.com/PacHub228/PACMine/mesa/mesa-win.zip";
+    static final String BACKEND = "http://185.218.137.116";
     static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
     static final Path GAMEDIR = HOME.resolve("PACMine");
     static final Path CFG     = HOME.resolve("launcher.properties");
+    static final Path PROFILE = HOME.resolve("profile.properties");
     static final boolean WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
 
     static final Color BG = new Color(0x20242E), PANEL = new Color(0x2A2F3B),
                        ACCENT = new Color(0xD9F299), TEXT = new Color(0xE6E8EC), SUB = new Color(0x9AA0AC);
 
-    static JLabel status, versionInfo;
+    static JLabel status, versionInfo, account;
     static JProgressBar bar;
-    static JButton play, update, openFolder;
+    static JButton play, update, openFolder, loginBtn, guestBtn;
     static JComboBox<String> versionBox;
     static JCheckBox swGl;
     static JTextArea log;
@@ -88,6 +90,18 @@ public class LauncherMain {
         swGl.addActionListener(e -> saveCfg());
         g.gridx = 0; g.gridy = 1; g.gridwidth = 2; g.weightx = 0; controls.add(swGl, g);
 
+        // account row
+        JPanel acc = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        acc.setOpaque(false);
+        account = new JLabel(); account.setForeground(TEXT);
+        loginBtn = new JButton("Войти через сайт");
+        guestBtn = new JButton("Играть без лицензии");
+        loginBtn.addActionListener(e -> loginViaSite());
+        guestBtn.addActionListener(e -> playAsGuest());
+        acc.add(account); acc.add(loginBtn); acc.add(guestBtn);
+        g.gridx = 0; g.gridy = 2; g.gridwidth = 2; controls.add(acc, g);
+        refreshAccount();
+
         center.add(controls, BorderLayout.NORTH);
 
         log = new JTextArea();
@@ -128,6 +142,120 @@ public class LauncherMain {
 
         fetchVersionsAsync();
         checkUpdateAsync();
+    }
+
+    // ---------------- account ----------------
+    static void refreshAccount() {
+        Properties p = readProfile();
+        String name = p.getProperty("name", "");
+        boolean hasToken = !p.getProperty("token", "").isEmpty();
+        SwingUtilities.invokeLater(() -> {
+            if (hasToken) account.setText("Аккаунт: " + name + "  ✓");
+            else if (!name.isEmpty()) account.setText("Гость: " + name);
+            else account.setText("Не выполнен вход");
+        });
+    }
+
+    static void loginViaSite() {
+        setButtons(false);
+        new Thread(() -> {
+            try {
+                appendLog("Запрашиваю код входа...");
+                String start = httpPost(BACKEND + "/api/device/start", "");
+                String code = extract(start, "code");
+                if (code == null) throw new IOException("no code from server");
+                String url = BACKEND + "/?code=" + code;
+                openInBrowser(url);
+                setStatus("Подтвердите вход в браузере...", 0);
+                for (int i = 0; i < 90; i++) {           // poll up to ~3 min
+                    Thread.sleep(2000);
+                    String poll = httpPost(BACKEND + "/api/device/poll", "code=" + code);
+                    if (poll.contains("\"status\":\"ok\"")) {
+                        String token = extract(poll, "token"), name = extract(poll, "name");
+                        boolean premium = poll.contains("\"premium\":true");
+                        writeProfile(name, token);
+                        refreshAccount();
+                        setStatus("Вошли как " + name + (premium ? " ✓" : ""), 0);
+                        appendLog("Вход выполнен: " + name + (premium ? " (premium)" : ""));
+                        return;
+                    }
+                }
+                setStatus("Время ожидания входа истекло", 0);
+            } catch (Exception ex) {
+                setStatus("Ошибка входа: " + ex.getMessage(), 0);
+                appendLog("login error: " + ex);
+            } finally { setButtons(true); }
+        }, "launcher-login").start();
+    }
+
+    /** Try to open a real browser; always show a copyable link as a fallback. */
+    static void openInBrowser(String url) {
+        // copy to clipboard
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                .setContents(new java.awt.datatransfer.StringSelection(url), null);
+        } catch (Exception ignored) {}
+        // best-effort auto-open: prefer real browsers over the default http handler
+        boolean opened = false;
+        String[] browsers = WINDOWS
+            ? new String[]{"cmd", "/c", "start", "", url}
+            : new String[]{"xdg-open", url};
+        try { new ProcessBuilder(browsers).start(); opened = true; } catch (Exception ignored) {}
+        appendLog("Ссылка для входа: " + url);
+        final boolean auto = opened;
+        SwingUtilities.invokeLater(() -> {
+            JTextField field = new JTextField(url);
+            field.setEditable(false);
+            field.selectAll();
+            JPanel panel = new JPanel(new BorderLayout(6, 6));
+            panel.add(new JLabel("<html>Открой эту ссылку в браузере и войди.<br>"
+                + "Ссылка скопирована в буфер обмена" + (auto ? " (и попытались открыть)." : ".") + "</html>"), BorderLayout.NORTH);
+            panel.add(field, BorderLayout.CENTER);
+            JOptionPane.showMessageDialog(null, panel, "Вход через сайт", JOptionPane.INFORMATION_MESSAGE);
+        });
+    }
+
+    static void playAsGuest() {
+        String nick = JOptionPane.showInputDialog(null, "Введите ник (без лицензии):", "Гость", JOptionPane.QUESTION_MESSAGE);
+        if (nick == null) return;
+        nick = nick.trim();
+        if (nick.isEmpty()) nick = "Player";
+        writeProfile(nick, "");   // no token => free
+        refreshAccount();
+        setStatus("Гость: " + nick, 0);
+    }
+
+    static Properties readProfile() {
+        Properties p = new Properties();
+        try (InputStream in = Files.newInputStream(PROFILE)) { p.load(in); } catch (IOException ignored) {}
+        return p;
+    }
+    static void writeProfile(String name, String token) {
+        Properties p = new Properties();
+        p.setProperty("name", name == null ? "" : name);
+        p.setProperty("token", token == null ? "" : token);
+        try { Files.createDirectories(HOME); try (OutputStream o = Files.newOutputStream(PROFILE)) { p.store(o, "PACMine profile"); } }
+        catch (IOException e) { appendLog("cannot save profile: " + e.getMessage()); }
+    }
+
+    static String extract(String json, String key) {
+        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
+        return m.find() ? m.group(1) : null;
+    }
+
+    static String httpPost(String url, String body) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod("POST");
+        c.setDoOutput(true);
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "PACMine-Launcher");
+        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        c.setConnectTimeout(8000); c.setReadTimeout(8000);
+        try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes("UTF-8")); }
+        InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        if (in != null) { byte[] buf = new byte[4096]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); }
+        return bo.toString("UTF-8");
     }
 
     // ---------------- actions ----------------

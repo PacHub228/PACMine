@@ -13,7 +13,7 @@ import java.util.Queue;
  * actions back to the host via a shared event queue.
  */
 public class NetServer {
-    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4;
+    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4, T_NAME = 5;
     public static final int PORT = 25565;
 
     private final World world;
@@ -23,10 +23,16 @@ public class NetServer {
     private final AtomicInteger nextId = new AtomicInteger(1); // host is 0
     private ServerSocket ss;
     private volatile boolean running;
+    private volatile boolean hasHost = true;       // dedicated server has no local host player
+    private volatile String hostName = "Host";
+    private volatile boolean hostPremium = false;
 
     public NetServer(World world, boolean protection, Queue<NetEvent> hostQueue) {
         this.world = world; this.protection = protection; this.hostQueue = hostQueue;
     }
+
+    public void setDedicated() { hasHost = false; }
+    public void setHostInfo(String name, boolean premium) { hostName = name; hostPremium = premium; }
 
     public void start() throws IOException {
         ss = new ServerSocket(PORT);
@@ -74,6 +80,17 @@ public class NetServer {
                     world.set(x, y, z, b);
                     enqueueBlock(x, y, z, b);
                     for (Conn o : clients) if (o != c) o.sendBlock(x, y, z, b);
+                } else if (type == T_NAME) {
+                    String provided = c.in.readUTF();
+                    String token = c.in.readUTF();
+                    String[] v = AuthClient.verify(token);   // server-side license check
+                    if (v != null) { c.name = v[0]; c.premium = Boolean.parseBoolean(v[1]); }
+                    else { c.name = provided.isEmpty() ? "Player" : provided; c.premium = false; }
+                    enqueueName(c.id, c.name, c.premium);
+                    for (Conn o : clients) if (o != c) o.sendName(c.id, c.name, c.premium);
+                    // tell the newcomer about everyone already here (host + other clients)
+                    if (hasHost) c.sendName(0, hostName, hostPremium);
+                    for (Conn o : clients) if (o != c && o.name != null) c.sendName(o.id, o.name, o.premium);
                 }
             }
         } catch (IOException e) {
@@ -93,6 +110,10 @@ public class NetServer {
     public void hostBlock(int x, int y, int z, byte b) {
         for (Conn o : clients) o.sendBlock(x, y, z, b);
     }
+    public void hostName(String name, boolean premium) {
+        hostName = name; hostPremium = premium;
+        for (Conn o : clients) o.sendName(0, name, premium);
+    }
 
     private void enqueueMove(int id, double x, double y, double z, float yaw, float pitch) {
         NetEvent e = new NetEvent(); e.type = NetEvent.MOVE; e.id = id;
@@ -104,11 +125,15 @@ public class NetServer {
     private void enqueueLeave(int id) {
         NetEvent e = new NetEvent(); e.type = NetEvent.LEAVE; e.id = id; hostQueue.add(e);
     }
+    private void enqueueName(int id, String name, boolean premium) {
+        NetEvent e = new NetEvent(); e.type = NetEvent.NAME; e.id = id; e.name = name; e.premium = premium; hostQueue.add(e);
+    }
 
     /** One connected client. */
     private class Conn {
         final Socket sock; final int id;
         final DataInputStream in; final DataOutputStream out;
+        volatile String name; volatile boolean premium;
         Conn(Socket s, int id) throws IOException {
             this.sock = s; this.id = id;
             s.setTcpNoDelay(true);
@@ -140,6 +165,10 @@ public class NetServer {
         }
         void sendLeave(int pid) {
             try { synchronized (out) { out.writeByte(T_LEAVE); out.writeInt(pid); out.flush(); } }
+            catch (IOException e) { close(); }
+        }
+        void sendName(int pid, String nm, boolean prem) {
+            try { synchronized (out) { out.writeByte(T_NAME); out.writeInt(pid); out.writeUTF(nm == null ? "" : nm); out.writeBoolean(prem); out.flush(); } }
             catch (IOException e) { close(); }
         }
         void close() { try { sock.close(); } catch (IOException ignored) {} }

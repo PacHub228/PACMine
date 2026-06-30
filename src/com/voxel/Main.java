@@ -38,8 +38,15 @@ public class Main {
     private int myId = 0;
     private final java.util.concurrent.ConcurrentLinkedQueue<NetEvent> netQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.Map<Integer, double[]> remotePlayers = new java.util.HashMap<>(); // id -> {x,y,z,yaw,pitch}
+    private final java.util.Map<Integer, String> remoteNames = new java.util.HashMap<>();
+    private final java.util.Map<Integer, Boolean> remotePrem = new java.util.HashMap<>();
     private final StringBuilder ipInput = new StringBuilder("localhost");
     private double moveSendTimer = 0;
+
+    // profile (free vs premium edition)
+    private String profileName = "Player";
+    private boolean profilePremium = false;
+    private String profileToken = "";
     private boolean inMenu = true;
     private Screen screen = Screen.MAIN;
     private boolean paused = false;        // in-game pause overlay
@@ -142,7 +149,20 @@ public class Main {
         pHead      = TextureAtlas.loadStandalone("assets/player_head.png");
         pBody      = TextureAtlas.loadStandalone("assets/player.png");
         pBodyFront = TextureAtlas.loadStandalone("assets/player_covta_pered.png");
+        loadProfile();
         updateTitle();
+    }
+
+    /** Load the profile (name + login token) and verify the license with the backend. */
+    private void loadProfile() {
+        java.util.Properties p = new java.util.Properties();
+        java.io.File f = new java.io.File(System.getProperty("user.home"), ".pacmine/profile.properties");
+        try (java.io.InputStream in = new java.io.FileInputStream(f)) { p.load(in); } catch (Exception ignored) {}
+        String name = p.getProperty("name", "Player").trim();
+        profileToken = p.getProperty("token", "").trim();
+        String[] v = AuthClient.verify(profileToken);   // license check
+        if (v != null) { profileName = v[0]; profilePremium = Boolean.parseBoolean(v[1]); }
+        else { profileName = name.isEmpty() ? "Player" : name; profilePremium = false; }
     }
 
     /** Create a brand-new world of the chosen size and start playing it. */
@@ -223,6 +243,7 @@ public class Main {
         multiplayer = true; isHost = true; myId = 0; worldName = null;
         try {
             server = new NetServer(world, protection, netQueue);
+            server.setHostInfo(profileName, profilePremium);
             server.start();
             enterGame();
         } catch (IOException e) {
@@ -235,6 +256,7 @@ public class Main {
         try {
             remotePlayers.clear(); netQueue.clear();
             client = new NetClient(ip, NetServer.PORT, netQueue);
+            client.sendName(profileName, profileToken);
             multiplayer = true; isHost = false; connecting = true;
             // world + player are built when the WORLD event arrives
         } catch (IOException e) {
@@ -267,8 +289,11 @@ public class Main {
                 case NetEvent.MOVE:
                     remotePlayers.put(e.id, new double[]{e.px, e.py, e.pz, e.yaw, e.pitch});
                     break;
+                case NetEvent.NAME:
+                    remoteNames.put(e.id, e.name); remotePrem.put(e.id, e.premium);
+                    break;
                 case NetEvent.LEAVE:
-                    remotePlayers.remove(e.id);
+                    remotePlayers.remove(e.id); remoteNames.remove(e.id); remotePrem.remove(e.id);
                     break;
             }
         }
@@ -568,6 +593,7 @@ public class Main {
 
         drawHearts();
         drawHotbar();
+        drawNameTags();
 
         // HUD panel in the TOP-LEFT corner
         float pad = 16, sz = 80;
@@ -940,6 +966,64 @@ public class Main {
         }
     }
 
+    /** Draw nicknames (and a blue premium tick) above remote players. */
+    private void drawNameTags() {
+        if (!multiplayer || remotePlayers.isEmpty()) return;
+        for (java.util.Map.Entry<Integer, double[]> en : remotePlayers.entrySet()) {
+            int id = en.getKey();
+            if (id == myId) continue;
+            String nm = remoteNames.get(id);
+            if (nm == null || nm.isEmpty()) nm = "Player";
+            double[] p = en.getValue();
+            float[] sc = worldToScreen(p[0], p[1] + 1.95, p[2]); // above the head
+            if (sc == null) continue;
+            float ps = 2.5f;
+            float w = Font5x7.width(nm, ps);
+            boolean prem = Boolean.TRUE.equals(remotePrem.get(id));
+            float checkW = prem ? 9 * ps : 0;
+            float x = sc[0] - (w + checkW) / 2, y = sc[1];
+            // backdrop
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(0, 0, 0, 0.5f);
+            quad(x - 4, y - 3, x + w + checkW + 4, y + 7 * ps + 3);
+            // name
+            glColor3f(1, 1, 1);
+            Font5x7.draw(nm, x, y, ps);
+            // blue premium tick
+            if (prem) drawCheck(x + w + 4 * ps, y, 7 * ps);
+        }
+    }
+
+    /** A small blue check mark, bottom-left at (x,y), roughly `s` tall. */
+    private void drawCheck(float x, float y, float s) {
+        glColor3f(0.25f, 0.55f, 1f);
+        glLineWidth(3);
+        glBegin(GL_LINES);
+        glVertex2f(x, y + s * 0.6f);          glVertex2f(x + s * 0.35f, y + s);
+        glVertex2f(x + s * 0.35f, y + s);     glVertex2f(x + s, y);
+        glEnd();
+        glColor3f(1, 1, 1);
+    }
+
+    /** Project a world point to screen pixels using the current camera. Returns null if behind. */
+    private float[] worldToScreen(double wx, double wy, double wz) {
+        double dx = wx - player.x, dy = wy - (player.y + Player.EYE), dz = wz - player.z;
+        double ry = Math.toRadians(-player.yaw);
+        double x1 = dx * Math.cos(ry) + dz * Math.sin(ry);
+        double z1 = -dx * Math.sin(ry) + dz * Math.cos(ry);
+        double rx = Math.toRadians(-player.pitch);
+        double y2 = dy * Math.cos(rx) - z1 * Math.sin(rx);
+        double z2 = dy * Math.sin(rx) + z1 * Math.cos(rx);
+        if (z2 >= -0.1) return null;                 // behind / too close
+        double tanHalf = Math.tan(Math.toRadians(70) / 2);
+        double aspect = (double) width / height;
+        double ndcx = (x1 / (-z2)) / (tanHalf * aspect);
+        double ndcy = (y2 / (-z2)) / tanHalf;
+        float sx = (float) ((ndcx * 0.5 + 0.5) * width);
+        float sy = (float) ((1 - (ndcy * 0.5 + 0.5)) * height);
+        return new float[]{sx, sy};
+    }
+
     /** Hotbar of block slots at the bottom-centre; selected slot is highlighted. */
     private void drawHotbar() {
         int n = hotbar.length;
@@ -981,5 +1065,39 @@ public class Main {
         glfwSetWindowTitle(window, "PACMine");
     }
 
-    public static void main(String[] args) { new Main().run(); }
+    public static void main(String[] args) {
+        if (args.length > 0 && args[0].startsWith("--server.")) {
+            runDedicatedServer(args[0].substring("--server.".length()));
+            return;
+        }
+        new Main().run();
+    }
+
+    /** Headless dedicated server: ./run.sh --server.{ip|localhost} */
+    private static void runDedicatedServer(String bind) {
+        try {
+            World world = new World(System.nanoTime(), 8, true);
+            java.util.Queue<NetEvent> sink = new java.util.concurrent.ConcurrentLinkedQueue<>();
+            NetServer s = new NetServer(world, true, sink);
+            s.setDedicated();
+            s.start();
+            System.out.println("=== PACMine dedicated server ===");
+            System.out.println("Listening on port " + NetServer.PORT);
+            try {
+                String lan = java.net.InetAddress.getLocalHost().getHostAddress();
+                System.out.println("LAN address: " + lan);
+            } catch (Exception ignored) {}
+            if (bind.equalsIgnoreCase("localhost"))
+                System.out.println("Mode: local/LAN — players join via 'localhost' (same PC) or your 192.168.x.x address.");
+            else
+                System.out.println("Mode: public — players join via '" + bind + "' (IP or domain pointing to it). Forward port " + NetServer.PORT + ".");
+            System.out.println("Press Ctrl+C to stop.");
+            while (true) {
+                sink.clear();                 // drop host-facing events; nobody is hosting locally
+                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+            }
+        } catch (IOException e) {
+            System.err.println("Server failed to start: " + e.getMessage());
+        }
+    }
 }

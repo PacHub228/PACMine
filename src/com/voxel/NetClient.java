@@ -67,6 +67,12 @@ public class NetClient {
                         queue.add(e);
                         break;
                     }
+                    case NetServer.T_NAME: {
+                        NetEvent e = new NetEvent();
+                        e.type = NetEvent.NAME; e.id = in.readInt(); e.name = in.readUTF(); e.premium = in.readBoolean();
+                        queue.add(e);
+                        break;
+                    }
                 }
             }
         } catch (IOException e) {
@@ -86,6 +92,14 @@ public class NetClient {
         try { synchronized (out) {
             out.writeByte(NetServer.T_BLOCK);
             out.writeInt(x); out.writeInt(y); out.writeInt(z); out.writeByte(b); out.flush();
+        }} catch (IOException ignored) {}
+    }
+
+    /** Send our chosen name and login token; the server verifies premium. */
+    public void sendName(String name, String token) {
+        try { synchronized (out) {
+            out.writeByte(NetServer.T_NAME); out.writeInt(0);
+            out.writeUTF(name == null ? "" : name); out.writeUTF(token == null ? "" : token); out.flush();
         }} catch (IOException ignored) {}
     }
 

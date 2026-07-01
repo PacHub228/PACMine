@@ -372,6 +372,13 @@ public class Main {
         zombies.add(z);
     }
 
+    /** A zombie mined a world block: clear it and re-mesh (bedrock is protected in Zombie). */
+    private void zombieBreak(int x, int y, int z) {
+        if (world.get(x, y, z) == World.AIR) return;
+        world.set(x, y, z, World.AIR);
+        renderer.markDirty(x, z);
+    }
+
     /** Super mode: timed waves of fast, strafing, armed zombies. */
     private void manageWaves(double dt) {
         if (!zombies.isEmpty()) return;          // wait until the wave is cleared
@@ -616,7 +623,7 @@ public class Main {
                 handleMovement(dt);
                 if (!multiplayer) {
                     if (superMode) manageWaves(dt); else manageZombies(dt);
-                    for (Zombie z : zombies) z.update(player, dt);
+                    for (Zombie z : zombies) z.update(player, dt, this::zombieBreak);
                 }
                 broadcastMove(dt);
                 updateMining(dt);

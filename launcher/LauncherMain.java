@@ -34,7 +34,7 @@ public class LauncherMain {
     static JProgressBar bar;
     static JButton play, update, openFolder, loginBtn, guestBtn;
     static JComboBox<String> versionBox;
-    static JCheckBox swGl;
+    static JCheckBox swGl, devBox;
     static JTextArea log;
     static final Properties cfg = new Properties();
 
@@ -82,6 +82,16 @@ public class LauncherMain {
         versionBox.setSelectedItem(MAIN_LABEL);
         versionBox.addActionListener(e -> { saveCfg(); checkUpdateAsync(); });
         g.gridx = 1; g.weightx = 1; controls.add(versionBox, g);
+
+        devBox = new JCheckBox("Версия из коммитов (dev, последний main)");
+        devBox.setOpaque(false); devBox.setForeground(TEXT);
+        devBox.setSelected(Boolean.parseBoolean(cfg.getProperty("dev", "false")));
+        devBox.addActionListener(e -> {
+            versionBox.setEnabled(!devBox.isSelected());
+            saveCfg(); checkUpdateAsync();
+        });
+        versionBox.setEnabled(!devBox.isSelected());
+        g.gridx = 0; g.gridy = 3; g.gridwidth = 2; g.weightx = 0; controls.add(devBox, g);
 
         swGl = new JCheckBox("Software OpenGL (for virtual machines)");
         swGl.setOpaque(false); swGl.setForeground(TEXT);
@@ -261,6 +271,7 @@ public class LauncherMain {
     // ---------------- actions ----------------
     static final String MAIN_LABEL = "main (последняя версия)";
     static String ref() {
+        if (devBox != null && devBox.isSelected()) return "main";   // dev: latest commit
         Object s = versionBox.getSelectedItem();
         if (s == null) return "main";
         String v = s.toString();
@@ -366,11 +377,12 @@ public class LauncherMain {
         new Thread(() -> {
             List<String> tags = fetchReleaseTags();
             SwingUtilities.invokeLater(() -> {
-                String sel = cfg.getProperty("ref", "main");
+                String sel = cfg.getProperty("ref", "");
                 versionBox.removeAllItems();
-                versionBox.addItem(MAIN_LABEL);
                 for (String t : tags) versionBox.addItem(t);
-                versionBox.setSelectedItem(sel.equals("main") ? MAIN_LABEL : sel);
+                if (tags.isEmpty()) versionBox.addItem(MAIN_LABEL);
+                if (!sel.isEmpty() && !sel.equals("main")) versionBox.setSelectedItem(sel);
+                else if (!tags.isEmpty()) versionBox.setSelectedIndex(0); // newest release
             });
         }, "launcher-versions").start();
     }
@@ -500,6 +512,7 @@ public class LauncherMain {
     static void saveCfg() {
         cfg.setProperty("ref", ref());
         cfg.setProperty("vm", String.valueOf(swGl != null && swGl.isSelected()));
+        cfg.setProperty("dev", String.valueOf(devBox != null && devBox.isSelected()));
         try { Files.createDirectories(HOME); try (OutputStream o = Files.newOutputStream(CFG)) { cfg.store(o, "PACMine launcher"); } }
         catch (IOException ignored) {}
     }

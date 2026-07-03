@@ -1,129 +1,209 @@
 package com.voxel;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
- * Voxel world divided into vertical-column chunks of CHUNK x CHUNK. The
- * horizontal size is configurable (in chunks); height is fixed. Terrain is
- * generated from layered value noise, and each chunk keeps its own mesh so
- * block edits only rebuild one chunk.
+ * Voxel world divided into vertical-column chunks of CHUNK x CHUNK. Height is
+ * fixed. Two backends:
+ *  - finite: a single flat array (saveable, used by multiplayer);
+ *  - infinite: chunks generated on demand and streamed around the player.
  */
 public class World {
     public static final int CHUNK = 14;   // chunk footprint in blocks
     public static final int SY = 64;      // world height (fixed)
 
-    // Block ids
     public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9;
 
-    public final int cx, cz;   // size in chunks
-    public final int sx, sz;   // size in blocks
-    private final byte[] blocks;
+    public final boolean infinite;
+    public final int cx, cz;   // size in chunks (finite only)
+    public final int sx, sz;   // size in blocks (finite only)
 
-    /** Generate a fresh world of `chunks` x `chunks`. */
+    // finite backend
+    private final byte[] blocks;
+    // infinite backend
+    private final Map<Long, byte[]> chunkMap;
+    private final long seed;
+    private final boolean bedrockLayer;
+    private Noise noise;
+
+    /** Generate a fresh finite world of `chunks` x `chunks`. */
     public World(long seed, int chunks, boolean bedrockLayer) {
+        this.infinite = false; this.seed = seed; this.bedrockLayer = bedrockLayer;
         this.cx = chunks; this.cz = chunks;
         this.sx = chunks * CHUNK; this.sz = chunks * CHUNK;
         this.blocks = new byte[sx * SY * sz];
-        generate(seed, bedrockLayer);
+        this.chunkMap = null;
+        generateFinite(seed, bedrockLayer);
     }
 
-    /** Load an existing world from saved block data. */
+    /** Load an existing finite world from saved block data. */
     public World(int chunks, byte[] data) {
+        this.infinite = false; this.seed = 0; this.bedrockLayer = true;
         this.cx = chunks; this.cz = chunks;
         this.sx = chunks * CHUNK; this.sz = chunks * CHUNK;
         this.blocks = data;
+        this.chunkMap = null;
+    }
+
+    private World(long seed, boolean bedrockLayer) {
+        this.infinite = true; this.seed = seed; this.bedrockLayer = bedrockLayer;
+        this.cx = 0; this.cz = 0; this.sx = 0; this.sz = 0;
+        this.blocks = null;
+        this.chunkMap = new HashMap<>();
+        this.noise = new Noise(seed);
+    }
+
+    /** Create an endless streaming world. */
+    public static World createInfinite(long seed, boolean bedrockLayer) {
+        return new World(seed, bedrockLayer);
     }
 
     public byte[] data() { return blocks; }
+    public long seed() { return seed; }
 
-    private int idx(int x, int y, int z) { return (y * sz + z) * sx + x; }
+    /** Loaded chunks (infinite world) — the ones generated near the player. */
+    public Map<Long, byte[]> exportChunks() { return chunkMap; }
+    public void importChunk(int cx, int cz, byte[] data) { chunkMap.put(key(cx, cz), data); }
+    public static int chunkCX(long k) { return (int) (k >> 32); }
+    public static int chunkCZ(long k) { return (int) (long) k; }
 
+    // ---- access ----
     public boolean inBounds(int x, int y, int z) {
-        return x >= 0 && x < sx && y >= 0 && y < SY && z >= 0 && z < sz;
+        if (y < 0 || y >= SY) return false;
+        if (infinite) return true;
+        return x >= 0 && x < sx && z >= 0 && z < sz;
     }
 
     public byte get(int x, int y, int z) {
-        if (!inBounds(x, y, z)) return AIR;
-        return blocks[idx(x, y, z)];
+        if (y < 0 || y >= SY) return AIR;
+        if (infinite) {
+            byte[] c = chunk(Math.floorDiv(x, CHUNK), Math.floorDiv(z, CHUNK));
+            return c[localIdx(Math.floorMod(x, CHUNK), y, Math.floorMod(z, CHUNK))];
+        }
+        if (x < 0 || x >= sx || z < 0 || z >= sz) return AIR;
+        return blocks[(y * sz + z) * sx + x];
     }
 
     public void set(int x, int y, int z, byte b) {
-        if (!inBounds(x, y, z)) return;
-        blocks[idx(x, y, z)] = b;
+        if (y < 0 || y >= SY) return;
+        if (infinite) {
+            byte[] c = chunk(Math.floorDiv(x, CHUNK), Math.floorDiv(z, CHUNK));
+            c[localIdx(Math.floorMod(x, CHUNK), y, Math.floorMod(z, CHUNK))] = b;
+            return;
+        }
+        if (x < 0 || x >= sx || z < 0 || z >= sz) return;
+        blocks[(y * sz + z) * sx + x] = b;
     }
 
-    public boolean isSolid(int x, int y, int z) {
-        return get(x, y, z) != AIR;
+    public boolean isSolid(int x, int y, int z) { return get(x, y, z) != AIR; }
+
+    private static int localIdx(int lx, int y, int lz) { return (y * CHUNK + lz) * CHUNK + lx; }
+    private static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
+
+    /** Get or generate an infinite-world chunk. */
+    private byte[] chunk(int cx, int cz) {
+        byte[] c = chunkMap.get(key(cx, cz));
+        if (c == null) { c = new byte[CHUNK * SY * CHUNK]; chunkMap.put(key(cx, cz), c); fillChunk(cx, cz, c); }
+        return c;
     }
 
-    // ---- terrain generation ----
-    private void generate(long seed, boolean bedrockLayer) {
+    // ---- generation ----
+    private void generateFinite(long seed, boolean bedrock) {
         Noise n = new Noise(seed);
         java.util.Random rnd = new java.util.Random(seed);
-        for (int x = 0; x < sx; x++) {
-            for (int z = 0; z < sz; z++) {
-                double e = 0;
-                e += n.noise(x * 0.015, z * 0.015) * 1.0;
-                e += n.noise(x * 0.04, z * 0.04) * 0.4;
-                e += n.noise(x * 0.09, z * 0.09) * 0.15;
-                e /= 1.55;                       // normalize to ~[-1,1]
-                int h = (int) (24 + e * 16);     // surface height
-                if (h < 1) h = 1; if (h >= SY) h = SY - 1;
-
-                for (int y = 0; y <= h; y++) {
-                    byte b;
-                    if (y == 0 && bedrockLayer) b = BEDROCK;
-                    else if (y == h) b = (h < 20) ? SAND : GRASS;
-                    else if (y > h - 4) b = DIRT;
-                    else             b = STONE;
-                    set(x, y, z, b);
-                }
-
-                // occasional tree on grass
-                if (get(x, h, z) == GRASS && n.noise(x * 1.7 + 13, z * 1.7 + 7) > 0.8) {
-                    plantTree(x, h + 1, z);
-                }
-            }
-        }
-
-        // ore veins (clusters), replacing stone
+        for (int x = 0; x < sx; x++)
+            for (int z = 0; z < sz; z++)
+                genColumn(n, x, z, bedrock, 0, 0, null);
+        // ore veins
         int area = sx * sz;
-        int coalVeins = Math.max(8, area / 12);
-        int ironVeins = Math.max(3, area / 55);
-        for (int i = 0; i < coalVeins; i++) placeVein(rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);   // size 4..9
-        for (int i = 0; i < ironVeins; i++) placeVein(rnd, IRON, 3 + rnd.nextInt(4), 1, 16);        // size 3..6, deep
+        for (int i = 0; i < Math.max(8, area / 12); i++) placeVein(rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);
+        for (int i = 0; i < Math.max(3, area / 55); i++) placeVein(rnd, IRON, 3 + rnd.nextInt(4), 1, 16);
     }
 
-    /** Grow a connected blob of `size` ore blocks via random walk through stone. */
-    private void placeVein(java.util.Random rnd, byte ore, int size, int yMin, int yMax) {
-        int x = rnd.nextInt(sx), z = rnd.nextInt(sz);
-        int y = yMin + rnd.nextInt(Math.max(1, yMax - yMin));
-        for (int i = 0; i < size; i++) {
-            if (get(x, y, z) == STONE) set(x, y, z, ore);
-            switch (rnd.nextInt(6)) {           // step to a random neighbour
-                case 0: x++; break;  case 1: x--; break;
-                case 2: y++; break;  case 3: y--; break;
-                case 4: z++; break;  case 5: z--; break;
-            }
-            x = Math.max(0, Math.min(sx - 1, x));
-            y = Math.max(yMin, Math.min(yMax, y));
-            z = Math.max(0, Math.min(sz - 1, z));
+    /** Fill one infinite-world chunk (terrain + clipped trees + ores). */
+    private void fillChunk(int cx, int cz, byte[] c) {
+        int bx0 = cx * CHUNK, bz0 = cz * CHUNK;
+        for (int lx = 0; lx < CHUNK; lx++)
+            for (int lz = 0; lz < CHUNK; lz++)
+                genColumn(noise, bx0 + lx, bz0 + lz, bedrockLayer, bx0, bz0, c);
+        // deterministic ores per chunk
+        java.util.Random rnd = new java.util.Random(seed ^ (key(cx, cz) * 0x9E3779B97F4A7C15L));
+        for (int i = 0; i < 3; i++) veinInChunk(c, rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);
+        if (rnd.nextDouble() < 0.8) veinInChunk(c, rnd, IRON, 3 + rnd.nextInt(4), 1, 16);
+    }
+
+    /**
+     * Generate a single terrain column. If `c` is non-null we write into that
+     * chunk array (infinite, clipped to chunk); otherwise into the flat array.
+     */
+    private void genColumn(Noise n, int x, int z, boolean bedrock, int bx0, int bz0, byte[] c) {
+        double e = 0;
+        e += n.noise(x * 0.015, z * 0.015) * 1.0;
+        e += n.noise(x * 0.04, z * 0.04) * 0.4;
+        e += n.noise(x * 0.09, z * 0.09) * 0.15;
+        e /= 1.55;
+        int h = (int) (24 + e * 16);
+        if (h < 1) h = 1; if (h >= SY) h = SY - 1;
+        for (int y = 0; y <= h; y++) {
+            byte b;
+            if (y == 0 && bedrock) b = BEDROCK;
+            else if (y == h) b = (h < 20) ? SAND : GRASS;
+            else if (y > h - 4) b = DIRT;
+            else b = STONE;
+            put(x, y, z, b, bx0, bz0, c);
         }
+        if (getCol(x, h, z, bx0, bz0, c) == GRASS && n.noise(x * 1.7 + 13, z * 1.7 + 7) > 0.8)
+            plantTree(x, h + 1, z, bx0, bz0, c);
     }
 
-    private void plantTree(int x, int y, int z) {
+    private void plantTree(int x, int y, int z, int bx0, int bz0, byte[] c) {
         int trunk = 4;
-        for (int i = 0; i < trunk; i++) set(x, y + i, z, WOOD);
+        for (int i = 0; i < trunk; i++) put(x, y + i, z, WOOD, bx0, bz0, c);
         int top = y + trunk;
         for (int dx = -2; dx <= 2; dx++)
             for (int dz = -2; dz <= 2; dz++)
                 for (int dy = -1; dy <= 1; dy++) {
                     if (Math.abs(dx) == 2 && Math.abs(dz) == 2) continue;
-                    if (get(x + dx, top + dy, z + dz) == AIR)
-                        set(x + dx, top + dy, z + dz, LEAVES);
+                    if (getCol(x + dx, top + dy, z + dz, bx0, bz0, c) == AIR)
+                        put(x + dx, top + dy, z + dz, LEAVES, bx0, bz0, c);
                 }
-        set(x, top + 2, z, LEAVES);
+        put(x, top + 2, z, LEAVES, bx0, bz0, c);
     }
 
-    // ---- colors per block (r,g,b), kept for reference ----
+    /** Write helper used during generation (flat array or clipped chunk). */
+    private void put(int x, int y, int z, byte b, int bx0, int bz0, byte[] c) {
+        if (y < 0 || y >= SY) return;
+        if (c == null) { if (x >= 0 && x < sx && z >= 0 && z < sz) blocks[(y * sz + z) * sx + x] = b; return; }
+        int lx = x - bx0, lz = z - bz0;
+        if (lx < 0 || lx >= CHUNK || lz < 0 || lz >= CHUNK) return;   // clip to chunk
+        c[localIdx(lx, y, lz)] = b;
+    }
+    private byte getCol(int x, int y, int z, int bx0, int bz0, byte[] c) {
+        if (y < 0 || y >= SY) return AIR;
+        if (c == null) return (x >= 0 && x < sx && z >= 0 && z < sz) ? blocks[(y * sz + z) * sx + x] : AIR;
+        int lx = x - bx0, lz = z - bz0;
+        if (lx < 0 || lx >= CHUNK || lz < 0 || lz >= CHUNK) return AIR;
+        return c[localIdx(lx, y, lz)];
+    }
+
+    private void placeVein(java.util.Random rnd, byte ore, int size, int yMin, int yMax) {
+        int x = rnd.nextInt(sx), z = rnd.nextInt(sz), y = yMin + rnd.nextInt(Math.max(1, yMax - yMin));
+        for (int i = 0; i < size; i++) {
+            if (get(x, y, z) == STONE) set(x, y, z, ore);
+            switch (rnd.nextInt(6)) { case 0: x++; break; case 1: x--; break; case 2: y++; break; case 3: y--; break; case 4: z++; break; case 5: z--; break; }
+            x = Math.max(0, Math.min(sx - 1, x)); y = Math.max(yMin, Math.min(yMax, y)); z = Math.max(0, Math.min(sz - 1, z));
+        }
+    }
+    private void veinInChunk(byte[] c, java.util.Random rnd, byte ore, int size, int yMin, int yMax) {
+        int lx = rnd.nextInt(CHUNK), lz = rnd.nextInt(CHUNK), y = yMin + rnd.nextInt(Math.max(1, yMax - yMin));
+        for (int i = 0; i < size; i++) {
+            if (c[localIdx(lx, y, lz)] == STONE) c[localIdx(lx, y, lz)] = ore;
+            switch (rnd.nextInt(6)) { case 0: lx++; break; case 1: lx--; break; case 2: y++; break; case 3: y--; break; case 4: lz++; break; case 5: lz--; break; }
+            lx = Math.max(0, Math.min(CHUNK - 1, lx)); y = Math.max(yMin, Math.min(yMax, y)); lz = Math.max(0, Math.min(CHUNK - 1, lz));
+        }
+    }
+
     public static float[] color(byte b) {
         switch (b) {
             case GRASS:  return new float[]{0.35f, 0.66f, 0.27f};

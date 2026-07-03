@@ -11,7 +11,8 @@ import java.util.zip.GZIPOutputStream;
  * gzip-compressed file under the saves/ directory.
  */
 public class SaveGame {
-    private static final int MAGIC = 0x50414331; // "PAC1"
+    private static final int MAGIC = 0x50414331;     // "PAC1" finite
+    private static final int MAGIC_INF = 0x50414332; // "PAC2" infinite (per-chunk)
     public static final File DIR = new File("saves");
 
     public int chunks;
@@ -22,6 +23,11 @@ public class SaveGame {
     public boolean hasSword;
     public int logsBroken;
     public byte[] blocks;
+
+    // infinite worlds
+    public boolean infinite;
+    public long seed;
+    public java.util.Map<Long, byte[]> chunkMap;
 
     public static List<String> list() {
         List<String> names = new ArrayList<>();
@@ -50,8 +56,8 @@ public class SaveGame {
         DIR.mkdirs();
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(
                 new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pmw")))))) {
-            out.writeInt(MAGIC);
-            out.writeInt(chunks);
+            out.writeInt(infinite ? MAGIC_INF : MAGIC);
+            if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
             out.writeBoolean(creative);
             out.writeBoolean(protection);
@@ -60,17 +66,29 @@ public class SaveGame {
             out.writeDouble(health);
             out.writeBoolean(hasSword);
             out.writeInt(logsBroken);
-            out.writeInt(blocks.length);
-            out.write(blocks);
+            if (infinite) {
+                out.writeLong(seed);
+                out.writeInt(chunkMap.size());
+                for (java.util.Map.Entry<Long, byte[]> e : chunkMap.entrySet()) {
+                    out.writeLong(e.getKey());
+                    out.writeInt(e.getValue().length);
+                    out.write(e.getValue());
+                }
+            } else {
+                out.writeInt(blocks.length);
+                out.write(blocks);
+            }
         }
     }
 
     public static SaveGame load(String name) throws IOException {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new BufferedInputStream(new FileInputStream(new File(DIR, name + ".pmw")))))) {
-            if (in.readInt() != MAGIC) throw new IOException("bad save file");
+            int magic = in.readInt();
+            if (magic != MAGIC && magic != MAGIC_INF) throw new IOException("bad save file");
             SaveGame s = new SaveGame();
-            s.chunks = in.readInt();
+            s.infinite = magic == MAGIC_INF;
+            if (!s.infinite) s.chunks = in.readInt();
             s.hostileMobs = in.readBoolean();
             s.creative = in.readBoolean();
             s.protection = in.readBoolean();
@@ -79,9 +97,20 @@ public class SaveGame {
             s.health = in.readDouble();
             s.hasSword = in.readBoolean();
             s.logsBroken = in.readInt();
-            int len = in.readInt();
-            s.blocks = new byte[len];
-            in.readFully(s.blocks);
+            if (s.infinite) {
+                s.seed = in.readLong();
+                int n = in.readInt();
+                s.chunkMap = new java.util.HashMap<>();
+                for (int i = 0; i < n; i++) {
+                    long k = in.readLong();
+                    byte[] data = new byte[in.readInt()];
+                    in.readFully(data);
+                    s.chunkMap.put(k, data);
+                }
+            } else {
+                s.blocks = new byte[in.readInt()];
+                in.readFully(s.blocks);
+            }
             return s;
         }
     }

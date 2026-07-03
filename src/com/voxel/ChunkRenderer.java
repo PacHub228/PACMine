@@ -11,40 +11,87 @@ import static org.lwjgl.opengl.GL11.*;
 public class ChunkRenderer {
     private final World world;
     private final TextureAtlas atlas;
-    private final int[] lists;
-    private final boolean[] dirty;
+
+    // finite backend
+    private int[] lists;
+    private boolean[] dirty;
+
+    // infinite (streaming) backend
+    private final java.util.Map<Long, Integer> listByChunk = new java.util.HashMap<>();
+    private final java.util.Set<Long> dirtyChunks = new java.util.HashSet<>();
+    private static final int RENDER_DIST = 6;   // chunks in each direction (~84 blocks)
 
     private static final float TOP = 1.0f, BOTTOM = 0.5f, NS = 0.8f, EW = 0.65f;
 
     public ChunkRenderer(World world, TextureAtlas atlas) {
         this.world = world;
         this.atlas = atlas;
-        lists = new int[world.cx * world.cz];
-        dirty = new boolean[world.cx * world.cz];
-        for (int i = 0; i < lists.length; i++) { lists[i] = glGenLists(1); dirty[i] = true; }
+        if (!world.infinite) {
+            lists = new int[world.cx * world.cz];
+            dirty = new boolean[world.cx * world.cz];
+            for (int i = 0; i < lists.length; i++) { lists[i] = glGenLists(1); dirty[i] = true; }
+        }
     }
 
+    private static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
+
     public void markDirty(int blockX, int blockZ) {
-        int cx = blockX / World.CHUNK, cz = blockZ / World.CHUNK;
+        int cx = Math.floorDiv(blockX, World.CHUNK), cz = Math.floorDiv(blockZ, World.CHUNK);
         mark(cx, cz);
-        if (blockX % World.CHUNK == 0) mark(cx - 1, cz);
-        if (blockX % World.CHUNK == World.CHUNK - 1) mark(cx + 1, cz);
-        if (blockZ % World.CHUNK == 0) mark(cx, cz - 1);
-        if (blockZ % World.CHUNK == World.CHUNK - 1) mark(cx, cz + 1);
+        if (Math.floorMod(blockX, World.CHUNK) == 0) mark(cx - 1, cz);
+        if (Math.floorMod(blockX, World.CHUNK) == World.CHUNK - 1) mark(cx + 1, cz);
+        if (Math.floorMod(blockZ, World.CHUNK) == 0) mark(cx, cz - 1);
+        if (Math.floorMod(blockZ, World.CHUNK) == World.CHUNK - 1) mark(cx, cz + 1);
     }
 
     private void mark(int cx, int cz) {
+        if (world.infinite) { dirtyChunks.add(key(cx, cz)); return; }
         if (cx < 0 || cz < 0 || cx >= world.cx || cz >= world.cz) return;
         dirty[cz * world.cx + cx] = true;
     }
 
-    public void render() {
+    public void render(double px, double pz) {
         atlas.bind();
+        if (world.infinite) { streamRender(px, pz); return; }
         for (int cz = 0; cz < world.cz; cz++) {
             for (int cx = 0; cx < world.cx; cx++) {
                 int i = cz * world.cx + cx;
                 if (dirty[i]) { rebuild(cx, cz, lists[i]); dirty[i] = false; }
                 glCallList(lists[i]);
+            }
+        }
+    }
+
+    /** Build/draw chunks around the player and free those out of range. */
+    private void streamRender(double px, double pz) {
+        int pcx = Math.floorDiv((int) Math.floor(px), World.CHUNK);
+        int pcz = Math.floorDiv((int) Math.floor(pz), World.CHUNK);
+        int newBudget = 3;   // cap freshly generated chunks per frame to avoid hitches
+
+        for (int cz = pcz - RENDER_DIST; cz <= pcz + RENDER_DIST; cz++) {
+            for (int cx = pcx - RENDER_DIST; cx <= pcx + RENDER_DIST; cx++) {
+                long k = key(cx, cz);
+                Integer list = listByChunk.get(k);
+                if (list == null) {
+                    if (newBudget <= 0) continue;          // build later frames
+                    list = glGenLists(1);
+                    listByChunk.put(k, list);
+                    rebuild(cx, cz, list);
+                    newBudget--;
+                } else if (dirtyChunks.remove(k)) {
+                    rebuild(cx, cz, list);
+                }
+                glCallList(list);
+            }
+        }
+        // unload far chunks
+        var it = listByChunk.entrySet().iterator();
+        while (it.hasNext()) {
+            var en = it.next();
+            int cx = (int) (en.getKey() >> 32), cz = (int) (long) en.getKey();
+            if (Math.abs(cx - pcx) > RENDER_DIST + 2 || Math.abs(cz - pcz) > RENDER_DIST + 2) {
+                glDeleteLists(en.getValue(), 1);
+                it.remove();
             }
         }
     }

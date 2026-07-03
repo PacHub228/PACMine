@@ -70,8 +70,10 @@ public class Zombie {
             attackTimer = cooldown;
         }
 
-        if (x < 1) x = 1; if (x > world.sx - 1) x = world.sx - 1;
-        if (z < 1) z = 1; if (z > world.sz - 1) z = world.sz - 1;
+        if (!world.infinite) {
+            if (x < 1) x = 1; if (x > world.sx - 1) x = world.sx - 1;
+            if (z < 1) z = 1; if (z > world.sz - 1) z = world.sz - 1;
+        }
     }
 
     /** Move along one horizontal axis; step up a ledge or mine the wall if blocked. */

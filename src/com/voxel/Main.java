@@ -183,11 +183,13 @@ public class Main {
         else { profileName = name.isEmpty() ? "Player" : name; profilePremium = false; }
     }
 
-    /** Create a brand-new world of the chosen size and start playing it. */
+    /** Create a brand-new world of the chosen size and start playing it. chunks==1 => infinite. */
     private void newWorld(int chunks) {
-        world = new World(System.nanoTime(), chunks, protection);
+        boolean inf = chunks <= 1;
+        world = inf ? World.createInfinite(System.nanoTime(), protection)
+                    : new World(System.nanoTime(), chunks, protection);
         renderer = new ChunkRenderer(world, atlas);
-        spawnX = world.sx / 2; spawnZ = world.sz / 2;
+        spawnX = inf ? 0 : world.sx / 2; spawnZ = inf ? 0 : world.sz / 2;
         int sy = World.SY - 1;
         while (sy > 0) {
             byte b = world.get(spawnX, sy, spawnZ);
@@ -197,11 +199,11 @@ public class Main {
         spawnY = sy + 1;
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode;
-        player.borderWalls = protection;
-        hasSword = superMode;                  // Super gives the sword immediately
+        player.borderWalls = protection && !inf;   // no borders in an endless world
+        hasSword = superMode;
         logsBroken = 0;
         zombies.clear();
-        wave = 0; waveTimer = 0;               // waves start ~5s after spawn (manageWaves)
+        wave = 0; waveTimer = 0;
         worldName = SaveGame.nextName();
         try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
         enterGame();
@@ -212,15 +214,21 @@ public class Main {
         try {
             SaveGame s = SaveGame.load(name);
             hostileMobs = s.hostileMobs; creativeMode = s.creative; protection = s.protection;
-            world = new World(s.chunks, s.blocks);
+            superMode = false;
+            if (s.infinite) {
+                world = World.createInfinite(s.seed, s.protection);
+                for (java.util.Map.Entry<Long, byte[]> e : s.chunkMap.entrySet())
+                    world.importChunk(World.chunkCX(e.getKey()), World.chunkCZ(e.getKey()), e.getValue());
+            } else {
+                world = new World(s.chunks, s.blocks);
+            }
             renderer = new ChunkRenderer(world, atlas);
             player = new Player(world, s.px, s.py, s.pz);
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
-            player.creative = creativeMode; player.borderWalls = protection;
+            player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
             hasSword = s.hasSword; logsBroken = s.logsBroken;
-            spawnX = world.sx / 2; spawnY = (int) s.py; spawnZ = world.sz / 2;
+            spawnX = world.infinite ? 0 : world.sx / 2; spawnY = (int) s.py; spawnZ = world.infinite ? 0 : world.sz / 2;
             zombies.clear();
-            if (hostileMobs) spawnZombies(8, (int) s.px, (int) s.pz);
             worldName = name;
             enterGame();
         } catch (IOException e) {
@@ -231,12 +239,15 @@ public class Main {
     private void saveWorld() throws IOException {
         if (worldName == null) return;
         SaveGame s = new SaveGame();
-        s.chunks = world.cx;
         s.hostileMobs = hostileMobs; s.creative = creativeMode; s.protection = protection;
         s.px = player.x; s.py = player.y; s.pz = player.z;
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
         s.hasSword = hasSword; s.logsBroken = logsBroken;
-        s.blocks = world.data();
+        if (world.infinite) {
+            s.infinite = true; s.seed = world.seed(); s.chunkMap = world.exportChunks();
+        } else {
+            s.chunks = world.cx; s.blocks = world.data();
+        }
         s.save(worldName);
     }
 
@@ -244,7 +255,8 @@ public class Main {
 
     // ---------- multiplayer ----------
     private void hostGame() {
-        world = new World(System.nanoTime(), newChunks, protection);
+        int hostChunks = Math.max(6, newChunks);   // multiplayer needs a real finite world (no infinite)
+        world = new World(System.nanoTime(), hostChunks, protection);
         renderer = new ChunkRenderer(world, atlas);
         spawnX = world.sx / 2; spawnZ = world.sz / 2;
         int sy = World.SY - 1;
@@ -389,16 +401,6 @@ public class Main {
             wave++;
             int n = 2 + wave * 2;                 // growing waves
             for (int i = 0; i < n; i++) spawnZombieNear(true);
-        }
-    }
-
-    private void spawnZombies(int n, int cx, int cz) {
-        java.util.Random r = new java.util.Random();
-        for (int i = 0; i < n; i++) {
-            int zx = cx + r.nextInt(40) - 20;
-            int zz = cz + r.nextInt(40) - 20;
-            if (!world.inBounds(zx, 0, zz)) continue;
-            zombies.add(new Zombie(world, zx + 0.5, World.SY, zz + 0.5));
         }
     }
 
@@ -566,6 +568,7 @@ public class Main {
         if (r == null || r[3] == Integer.MIN_VALUE) return;
         int px = r[3], py = r[4], pz = r[5];
         if (world.isSolid(px, py, pz)) return;
+        if (intersectsPlayer(px, py, pz)) return;   // don't place a block inside yourself
         byte b = currentBlock();
         if (!player.creative) {
             if (inv[b] <= 0) return;     // nothing to place
@@ -574,6 +577,14 @@ public class Main {
         world.set(px, py, pz, b);
         renderer.markDirty(px, pz);
         netBlock(px, py, pz, b);
+    }
+
+    /** True if block cell (bx,by,bz) overlaps the player's AABB. */
+    private boolean intersectsPlayer(int bx, int by, int bz) {
+        double w = 0.3, h = 1.8;
+        return bx + 1 > player.x - w && bx < player.x + w
+            && bz + 1 > player.z - w && bz < player.z + w
+            && by + 1 > player.y && by < player.y + h;
     }
 
     /** Break the block at the given cell: drop into inventory + sync. */
@@ -644,7 +655,7 @@ public class Main {
             glClearColor(0.03f + (0.55f - 0.03f) * lt, 0.04f + (0.75f - 0.04f) * lt, 0.10f + (1.0f - 0.10f) * lt, 1f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
-            renderer.render();
+            renderer.render(player.x, player.z);
             if (!multiplayer) renderZombies();
             renderRemotePlayers();
             drawHud();
@@ -936,7 +947,7 @@ public class Main {
                 } else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
                 break;
             case CREATE:
-                if (inRect(sizeMinusRect(), mouseX, mouseY)) newChunks = Math.max(2, newChunks - 1);
+                if (inRect(sizeMinusRect(), mouseX, mouseY)) newChunks = Math.max(1, newChunks - 1);
                 else if (inRect(sizePlusRect(), mouseX, mouseY)) newChunks = Math.min(24, newChunks + 1);
                 else if (inRect(menuRect(1), mouseX, mouseY)) hostileMobs = !hostileMobs;
                 else if (inRect(menuRect(2), mouseX, mouseY)) cycleMode();
@@ -1025,7 +1036,7 @@ public class Main {
                 drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
                 break;
             case CREATE:
-                drawButton(menuRect(0), "- SIZE " + newChunks + " +", 0.3f, 0.4f, 0.55f);
+                drawButton(menuRect(0), "- SIZE " + (newChunks <= 1 ? "INFINITE" : String.valueOf(newChunks)) + " +", 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(1), "MOBS  " + onOff(hostileMobs), 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(2), "MODE  " + modeName(), 0.3f, 0.4f, 0.55f);
                 drawButton(menuRect(3), "PROTECT  " + onOff(protection), 0.3f, 0.4f, 0.55f);
@@ -1148,7 +1159,7 @@ public class Main {
             "PACMINE  " + (int) fps + " fps",
             String.format("XYZ: %.1f %.1f %.1f", player.x, player.y, player.z),
             String.format("Facing: yaw %.0f pitch %.0f", player.yaw, player.pitch),
-            "World: " + world.cx + "x" + world.cz + " chunks (" + world.sx + "x" + world.sz + ")",
+            world.infinite ? "World: infinite (streaming)" : ("World: " + world.cx + "x" + world.cz + " chunks (" + world.sx + "x" + world.sz + ")"),
             "Time: " + clock() + "  " + (night ? "(ночь)" : "(день)"),
             flip,
             superMode ? ("SUPER  wave " + wave + ", zombies " + zombies.size())

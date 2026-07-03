@@ -236,8 +236,9 @@ public class Main {
             spawnX = world.infinite ? 0 : world.sx / 2; spawnY = (int) s.py; spawnZ = world.infinite ? 0 : world.sz / 2;
             zombies.clear();
             for (double[] a : s.zombies) {
-                Zombie z = new Zombie(world, a[0], a[1], a[2]);
+                Zombie z = new Zombie(world, a[0], a[1], a[2], a.length > 5 ? (int) a[5] : Zombie.NORMAL);
                 z.yaw = (float) a[3]; z.combat = a[4] != 0;
+                if (a.length > 6) z.hp = a[6];
                 zombies.add(z);
             }
             drops.clear();
@@ -263,7 +264,7 @@ public class Main {
         s.hasSword = hasSword;
         s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
         s.selectedSlot = selectedSlot; s.inv = inv.clone();
-        for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0});
+        for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0, z.type, z.hp});
         for (ItemDrop d : drops) s.drops.add(new double[]{d.type, d.x, d.y, d.z});
         if (world.infinite) {
             s.infinite = true; s.seed = world.seed(); s.chunkMap = world.exportChunks();
@@ -402,7 +403,10 @@ public class Main {
         if (!world.inBounds(zx, 0, zz)) return;
         int sy = World.SY - 1;
         while (sy > 0 && !world.isSolid(zx, sy, zz)) sy--;
-        Zombie z = new Zombie(world, zx + 0.5, sy + 1, zz + 0.5);
+        // variant roll: mostly normal, sometimes a runner or a brute
+        double roll = Math.random();
+        int type = roll < 0.15 ? Zombie.RUNNER : roll < 0.27 ? Zombie.BRUTE : Zombie.NORMAL;
+        Zombie z = new Zombie(world, zx + 0.5, sy + 1, zz + 0.5, type);
         z.combat = combat;
         zombies.add(z);
     }
@@ -415,6 +419,16 @@ public class Main {
         renderer.markDirty(x, z);
         drops.add(new ItemDrop(world, b, x + 0.5, y + 0.3, z + 0.5));
     }
+
+    /** World edits for zombies: mine + pillar-up block placing. */
+    private final Zombie.Breaker zombieWorld = new Zombie.Breaker() {
+        public void breakAt(int x, int y, int z) { zombieBreak(x, y, z); }
+        public void placeAt(int x, int y, int z) {
+            if (world.get(x, y, z) != World.AIR) return;
+            world.set(x, y, z, World.DIRT);
+            renderer.markDirty(x, z);
+        }
+    };
 
     /** Super mode: timed waves of fast, strafing, armed zombies. */
     private void manageWaves(double dt) {
@@ -507,7 +521,7 @@ public class Main {
         double reach = 4.5;
         Zombie best = null; double bestT = reach;
         for (Zombie z : zombies) {
-            double zcy = z.y + Zombie.HEIGHT / 2;
+            double zcy = z.y + Zombie.HEIGHT * z.scale / 2;
             double cx = z.x - ex, cy = zcy - ey, cz = z.z - ez;
             double t = cx * dx + cy * dy + cz * dz;        // projection along view
             if (t < 0 || t > reach) continue;              // must be in front, within reach
@@ -517,7 +531,7 @@ public class Main {
             if (miss < 1.3 && t < bestT) { bestT = t; best = z; } // roughly aimed at
         }
         if (best != null) {
-            zombies.remove(best);
+            if (best.hit(1, player.x, player.z)) zombies.remove(best);  // dies only when hp runs out
             return true;
         }
         return false;
@@ -659,7 +673,7 @@ public class Main {
                 handleMovement(dt);
                 if (!multiplayer) {
                     if (superMode) manageWaves(dt); else manageZombies(dt);
-                    for (Zombie z : zombies) z.update(player, dt, this::zombieBreak);
+                    for (Zombie z : zombies) z.update(player, dt, zombieWorld);
                 }
                 broadcastMove(dt);
                 updateMining(dt);
@@ -669,7 +683,8 @@ public class Main {
                     inv[World.WOOD] -= WOOD_FOR_SWORD;
                     hasSword = true;
                 }
-                timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
+                if (superMode) timeOfDay = 0.25;                       // Super: eternal noon
+                else timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
@@ -895,7 +910,11 @@ public class Main {
             glPushMatrix();
             glTranslatef((float) z.x, (float) z.y, (float) z.z);
             glRotatef(z.yaw, 0, 1, 0);
-            glColor3f(1, 1, 1);
+            glScalef((float) z.scale, (float) z.scale, (float) z.scale);
+            // variant tint: runners yellowish, brutes darker
+            if (z.type == Zombie.RUNNER)     glColor3f(1f, 1f, 0.75f);
+            else if (z.type == Zombie.BRUTE) glColor3f(0.72f, 0.80f, 0.72f);
+            else                             glColor3f(1, 1, 1);
 
             double w = Zombie.WIDTH / 2, d = Zombie.DEPTH / 2, h = Zombie.HEAD / 2;
             // body box

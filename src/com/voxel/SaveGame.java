@@ -15,7 +15,8 @@ import java.util.zip.GZIPOutputStream;
  * removes the old .pmw so a world never exists in both formats.
  */
 public class SaveGame {
-    private static final int MAGIC_PMS = 0x504D5331;   // "PMS1" full save
+    private static final int MAGIC_PMS  = 0x504D5331;  // "PMS1" full save
+    private static final int MAGIC_PMS2 = 0x504D5332;  // "PMS2" adds zombie type + hp
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
@@ -34,7 +35,7 @@ public class SaveGame {
     public int wave; public double waveTimer;
     public int selectedSlot = 2;
     public int[] inv = new int[16];
-    public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat}
+    public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat, type, hp}
     public List<double[]> drops = new ArrayList<>();    // {type, x, y, z}
 
     // infinite worlds
@@ -74,7 +75,7 @@ public class SaveGame {
         DIR.mkdirs();
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(
                 new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pms")))))) {
-            out.writeInt(MAGIC_PMS);
+            out.writeInt(MAGIC_PMS2);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
@@ -95,6 +96,8 @@ public class SaveGame {
             for (double[] a : zombies) {
                 out.writeDouble(a[0]); out.writeDouble(a[1]); out.writeDouble(a[2]);
                 out.writeFloat((float) a[3]); out.writeBoolean(a[4] != 0);
+                out.writeInt(a.length > 5 ? (int) a[5] : 0);
+                out.writeDouble(a.length > 6 ? a[6] : 2);
             }
             out.writeInt(drops.size());
             for (double[] a : drops) {
@@ -123,13 +126,13 @@ public class SaveGame {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new BufferedInputStream(new FileInputStream(f))))) {
             int magic = in.readInt();
-            if (magic == MAGIC_PMS) return loadPms(in);
+            if (magic == MAGIC_PMS || magic == MAGIC_PMS2) return loadPms(in, magic == MAGIC_PMS2);
             if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
             throw new IOException("bad save file");
         }
     }
 
-    private static SaveGame loadPms(DataInputStream in) throws IOException {
+    private static SaveGame loadPms(DataInputStream in, boolean v2) throws IOException {
         SaveGame s = new SaveGame();
         s.infinite = in.readBoolean();
         if (!s.infinite) s.chunks = in.readInt();
@@ -149,9 +152,14 @@ public class SaveGame {
         s.inv = new int[ni];
         for (int i = 0; i < ni; i++) s.inv[i] = in.readInt();
         int nz = in.readInt();
-        for (int i = 0; i < nz; i++)
-            s.zombies.add(new double[]{in.readDouble(), in.readDouble(), in.readDouble(),
-                                       in.readFloat(), in.readBoolean() ? 1 : 0});
+        for (int i = 0; i < nz; i++) {
+            double zx = in.readDouble(), zy = in.readDouble(), zz = in.readDouble();
+            float zyaw = in.readFloat();
+            double combat = in.readBoolean() ? 1 : 0;
+            int type = v2 ? in.readInt() : 0;
+            double hp = v2 ? in.readDouble() : 2;
+            s.zombies.add(new double[]{zx, zy, zz, zyaw, combat, type, hp});
+        }
         int nd = in.readInt();
         for (int i = 0; i < nd; i++)
             s.drops.add(new double[]{in.readByte(), in.readDouble(), in.readDouble(), in.readDouble()});

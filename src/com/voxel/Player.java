@@ -16,6 +16,7 @@ public class Player {
 
     public boolean creative = false;   // fly + invulnerable
     public boolean borderWalls = true; // invisible walls at world edges
+    public boolean sprinting = false;  // hold Left Shift (survival)
 
     private static final double W = 0.3;   // half-width
     private static final double H = 1.8;    // total height
@@ -63,8 +64,9 @@ public class Player {
         double len = Math.hypot(mx, mz);
         if (len > 1e-6) { mx /= len; mz /= len; }
 
-        double dx = mx * SPEED * dt;
-        double dz = mz * SPEED * dt;
+        double speed = SPEED * (sprinting ? 1.6 : 1);
+        double dx = mx * speed * dt;
+        double dz = mz * speed * dt;
         double dy;
         if (creative) {
             vy = 0;

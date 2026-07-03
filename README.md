@@ -19,6 +19,7 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 |---|---|
 | Move | `W` `A` `S` `D` |
 | Jump | `Space` |
+| Sprint | hold `Left Shift` |
 | Look | mouse |
 | Break block / hit zombie | Left click |
 | Place block | Right click |

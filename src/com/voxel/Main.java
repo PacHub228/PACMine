@@ -90,6 +90,8 @@ public class Main {
 
     // zombies
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
+    // dropped block items waiting to be picked up
+    private final java.util.List<ItemDrop> drops = new java.util.ArrayList<>();
     private int zHeadFront, zHead, zBody;
     private int pHeadFront, pHead, pBody, pBodyFront;   // remote player textures
 
@@ -202,7 +204,9 @@ public class Main {
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
         logsBroken = 0;
-        zombies.clear();
+        zombies.clear(); drops.clear();
+        java.util.Arrays.fill(inv, 0);
+        timeOfDay = 0.25;
         wave = 0; waveTimer = 0;
         worldName = SaveGame.nextName();
         try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
@@ -214,7 +218,7 @@ public class Main {
         try {
             SaveGame s = SaveGame.load(name);
             hostileMobs = s.hostileMobs; creativeMode = s.creative; protection = s.protection;
-            superMode = false;
+            superMode = s.superMode;
             if (s.infinite) {
                 world = World.createInfinite(s.seed, s.protection);
                 for (java.util.Map.Entry<Long, byte[]> e : s.chunkMap.entrySet())
@@ -227,8 +231,23 @@ public class Main {
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
             hasSword = s.hasSword; logsBroken = s.logsBroken;
+            timeOfDay = s.timeOfDay; wave = s.wave; waveTimer = s.waveTimer;
+            selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < hotbar.length) ? s.selectedSlot : 2;
+            java.util.Arrays.fill(inv, 0);
+            System.arraycopy(s.inv, 0, inv, 0, Math.min(s.inv.length, inv.length));
             spawnX = world.infinite ? 0 : world.sx / 2; spawnY = (int) s.py; spawnZ = world.infinite ? 0 : world.sz / 2;
             zombies.clear();
+            for (double[] a : s.zombies) {
+                Zombie z = new Zombie(world, a[0], a[1], a[2]);
+                z.yaw = (float) a[3]; z.combat = a[4] != 0;
+                zombies.add(z);
+            }
+            drops.clear();
+            for (double[] a : s.drops) {
+                ItemDrop d = new ItemDrop(world, (byte) a[0], a[1], a[2], a[3]);
+                d.vx = 0; d.vy = 0; d.vz = 0;   // restored drops lie still
+                drops.add(d);
+            }
             worldName = name;
             enterGame();
         } catch (IOException e) {
@@ -240,9 +259,14 @@ public class Main {
         if (worldName == null) return;
         SaveGame s = new SaveGame();
         s.hostileMobs = hostileMobs; s.creative = creativeMode; s.protection = protection;
+        s.superMode = superMode;
         s.px = player.x; s.py = player.y; s.pz = player.z;
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
         s.hasSword = hasSword; s.logsBroken = logsBroken;
+        s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
+        s.selectedSlot = selectedSlot; s.inv = inv.clone();
+        for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0});
+        for (ItemDrop d : drops) s.drops.add(new double[]{d.type, d.x, d.y, d.z});
         if (world.infinite) {
             s.infinite = true; s.seed = world.seed(); s.chunkMap = world.exportChunks();
         } else {
@@ -269,7 +293,7 @@ public class Main {
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
         hasSword = false; logsBroken = 0;
-        zombies.clear();                 // mobs disabled in multiplayer v1
+        zombies.clear(); drops.clear();  // mobs disabled in multiplayer v1
         remotePlayers.clear(); netQueue.clear();
         multiplayer = true; isHost = true; myId = 0; worldName = null;
         try {
@@ -311,6 +335,7 @@ public class Main {
                     player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
                     player.borderWalls = protection;
                     myId = client != null ? client.myId : 0;
+                    drops.clear();
                     connecting = false;
                     enterGame();
                     break;
@@ -386,9 +411,11 @@ public class Main {
 
     /** A zombie mined a world block: clear it and re-mesh (bedrock is protected in Zombie). */
     private void zombieBreak(int x, int y, int z) {
-        if (world.get(x, y, z) == World.AIR) return;
+        byte b = world.get(x, y, z);
+        if (b == World.AIR) return;
         world.set(x, y, z, World.AIR);
         renderer.markDirty(x, z);
+        drops.add(new ItemDrop(world, b, x + 0.5, y + 0.3, z + 0.5));
     }
 
     /** Super mode: timed waves of fast, strafing, armed zombies. */
@@ -594,7 +621,7 @@ public class Main {
         world.set(bx, by, bz, World.AIR);
         renderer.markDirty(bx, bz);
         netBlock(bx, by, bz, World.AIR);
-        if (broken >= 0 && broken < inv.length) inv[broken]++;   // store the block
+        drops.add(new ItemDrop(world, broken, bx + 0.5, by + 0.3, bz + 0.5));  // pop out as an item
         if (broken == World.WOOD && !hasSword) {
             logsBroken++;
             if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
@@ -638,6 +665,7 @@ public class Main {
                 }
                 broadcastMove(dt);
                 updateMining(dt);
+                updateDrops(dt);
                 timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
 
                 // death, or falling into the void when protection is off
@@ -656,6 +684,7 @@ public class Main {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
             renderer.render(player.x, player.z);
+            renderDrops();
             if (!multiplayer) renderZombies();
             renderRemotePlayers();
             drawHud();
@@ -677,6 +706,8 @@ public class Main {
         } else if (key(GLFW_KEY_SPACE)) {
             player.jump();
         }
+        // sprint: hold Left Shift while moving forward (survival; in creative Shift descends)
+        player.sprinting = !player.creative && f > 0 && key(GLFW_KEY_LEFT_SHIFT);
         player.update(f, s, v, dt);
     }
 
@@ -719,7 +750,7 @@ public class Main {
     private void setupCamera() {
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        double fov = 70, aspect = (double) width / height, near = 0.1, far = 300;
+        double fov = player.sprinting ? 78 : 70, aspect = (double) width / height, near = 0.1, far = 300;
         double top = Math.tan(Math.toRadians(fov / 2)) * near;
         glFrustum(-top * aspect, top * aspect, -top, top, near, far);
 
@@ -837,6 +868,57 @@ public class Main {
         glMatrixMode(GL_PROJECTION); glPopMatrix();
         glMatrixMode(GL_MODELVIEW);
     }
+
+    /** Physics + pickup for dropped items (radius ~1.3, small delay so they pop first). */
+    private void updateDrops(double dt) {
+        for (java.util.Iterator<ItemDrop> it = drops.iterator(); it.hasNext(); ) {
+            ItemDrop d = it.next();
+            d.update(dt);
+            if (d.expired()) { it.remove(); continue; }
+            double dx = d.x - player.x, dy = d.y - player.y, dz = d.z - player.z;
+            if (d.age > 0.4 && dx * dx + dz * dz < 1.7 && dy > -1.0 && dy < 2.0) {
+                if (d.type >= 0 && d.type < inv.length) inv[d.type]++;
+                it.remove();
+            }
+        }
+    }
+
+    /** Draw drops as small spinning, bobbing textured cubes. */
+    private void renderDrops() {
+        if (drops.isEmpty()) return;
+        glDisable(GL_CULL_FACE);
+        atlas.bind();
+        glColor3f(1, 1, 1);
+        for (ItemDrop d : drops) {
+            glPushMatrix();
+            float bob = (float) (Math.sin(d.age * 2.5) * 0.05);
+            glTranslatef((float) d.x, (float) (d.y + 0.12 + bob), (float) d.z);
+            glRotatef((float) (d.age * 60 % 360), 0, 1, 0);
+            float s = 0.16f;
+            glBegin(GL_QUADS);
+            for (int dir = 0; dir < 6; dir++) {
+                float[] uv = atlas.uv(atlas.tileFor(d.type, dir == 4 ? 0 : dir == 5 ? 1 : 2));
+                dropFace(dir, s, uv);
+            }
+            glEnd();
+            glPopMatrix();
+        }
+        glEnable(GL_CULL_FACE);
+    }
+
+    /** One face of a drop cube centred at the origin. dir as in boxFace. */
+    private void dropFace(int dir, float s, float[] uv) {
+        float u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
+        switch (dir) {
+            case 0: tv2(u0,v1,-s,-s, s); tv2(u1,v1, s,-s, s); tv2(u1,v0, s, s, s); tv2(u0,v0,-s, s, s); break;
+            case 1: tv2(u0,v1, s,-s,-s); tv2(u1,v1,-s,-s,-s); tv2(u1,v0,-s, s,-s); tv2(u0,v0, s, s,-s); break;
+            case 2: tv2(u0,v1, s,-s, s); tv2(u1,v1, s,-s,-s); tv2(u1,v0, s, s,-s); tv2(u0,v0, s, s, s); break;
+            case 3: tv2(u0,v1,-s,-s,-s); tv2(u1,v1,-s,-s, s); tv2(u1,v0,-s, s, s); tv2(u0,v0,-s, s,-s); break;
+            case 4: tv2(u0,v0,-s, s,-s); tv2(u0,v1,-s, s, s); tv2(u1,v1, s, s, s); tv2(u1,v0, s, s,-s); break;
+            case 5: tv2(u0,v0,-s,-s,-s); tv2(u1,v0, s,-s,-s); tv2(u1,v1, s,-s, s); tv2(u0,v1,-s,-s, s); break;
+        }
+    }
+    private void tv2(float u, float v, float x, float y, float z) { glTexCoord2f(u, v); glVertex3f(x, y, z); }
 
     private void renderZombies() {
         glDisable(GL_CULL_FACE); // model faces aren't carefully wound

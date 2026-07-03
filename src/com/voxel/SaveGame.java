@@ -7,22 +7,35 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Serialises a whole game (world blocks + settings + player state) to a
- * gzip-compressed file under the saves/ directory.
+ * Game save in the .pms format (PAC Mine Saves): stores EVERYTHING —
+ * world blocks, settings, player state, inventory, zombies, item drops,
+ * time of day and Super-mode wave progress.
+ *
+ * Legacy .pmw worlds are still readable; saving always writes .pms and
+ * removes the old .pmw so a world never exists in both formats.
  */
 public class SaveGame {
-    private static final int MAGIC = 0x50414331;     // "PAC1" finite
-    private static final int MAGIC_INF = 0x50414332; // "PAC2" infinite (per-chunk)
+    private static final int MAGIC_PMS = 0x504D5331;   // "PMS1" full save
+    private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
+    private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
 
     public int chunks;
-    public boolean hostileMobs, creative, protection;
+    public boolean hostileMobs, creative, superMode, protection;
     public double px, py, pz;
     public float yaw, pitch;
     public double health;
     public boolean hasSword;
     public int logsBroken;
     public byte[] blocks;
+
+    // full state (.pms only; legacy loads keep the defaults)
+    public double timeOfDay = 0.25;
+    public int wave; public double waveTimer;
+    public int selectedSlot = 2;
+    public int[] inv = new int[16];
+    public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat}
+    public List<double[]> drops = new ArrayList<>();    // {type, x, y, z}
 
     // infinite worlds
     public boolean infinite;
@@ -32,10 +45,13 @@ public class SaveGame {
     public static List<String> list() {
         List<String> names = new ArrayList<>();
         if (DIR.isDirectory()) {
-            File[] fs = DIR.listFiles((d, n) -> n.endsWith(".pmw"));
+            File[] fs = DIR.listFiles((d, n) -> n.endsWith(".pms") || n.endsWith(".pmw"));
             if (fs != null) {
                 java.util.Arrays.sort(fs, (a, b) -> a.getName().compareTo(b.getName()));
-                for (File f : fs) names.add(f.getName().substring(0, f.getName().length() - 4));
+                for (File f : fs) {
+                    String n = f.getName().substring(0, f.getName().lastIndexOf('.'));
+                    if (!names.contains(n)) names.add(n);
+                }
             }
         }
         return names;
@@ -44,28 +60,47 @@ public class SaveGame {
     /** Next free world name like WORLD1, WORLD2, ... */
     public static String nextName() {
         int i = 1;
-        while (new File(DIR, "WORLD" + i + ".pmw").exists()) i++;
+        while (new File(DIR, "WORLD" + i + ".pms").exists()
+            || new File(DIR, "WORLD" + i + ".pmw").exists()) i++;
         return "WORLD" + i;
     }
 
     public static void delete(String name) {
+        new File(DIR, name + ".pms").delete();
         new File(DIR, name + ".pmw").delete();
     }
 
     public void save(String name) throws IOException {
         DIR.mkdirs();
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(
-                new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pmw")))))) {
-            out.writeInt(infinite ? MAGIC_INF : MAGIC);
+                new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pms")))))) {
+            out.writeInt(MAGIC_PMS);
+            out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
             out.writeBoolean(creative);
+            out.writeBoolean(superMode);
             out.writeBoolean(protection);
             out.writeDouble(px); out.writeDouble(py); out.writeDouble(pz);
             out.writeFloat(yaw); out.writeFloat(pitch);
             out.writeDouble(health);
             out.writeBoolean(hasSword);
             out.writeInt(logsBroken);
+            out.writeDouble(timeOfDay);
+            out.writeInt(wave); out.writeDouble(waveTimer);
+            out.writeInt(selectedSlot);
+            out.writeInt(inv.length);
+            for (int v : inv) out.writeInt(v);
+            out.writeInt(zombies.size());
+            for (double[] a : zombies) {
+                out.writeDouble(a[0]); out.writeDouble(a[1]); out.writeDouble(a[2]);
+                out.writeFloat((float) a[3]); out.writeBoolean(a[4] != 0);
+            }
+            out.writeInt(drops.size());
+            for (double[] a : drops) {
+                out.writeByte((byte) a[0]);
+                out.writeDouble(a[1]); out.writeDouble(a[2]); out.writeDouble(a[3]);
+            }
             if (infinite) {
                 out.writeLong(seed);
                 out.writeInt(chunkMap.size());
@@ -79,39 +114,81 @@ public class SaveGame {
                 out.write(blocks);
             }
         }
+        new File(DIR, name + ".pmw").delete();   // superseded by the .pms
     }
 
     public static SaveGame load(String name) throws IOException {
+        File pms = new File(DIR, name + ".pms");
+        File f = pms.exists() ? pms : new File(DIR, name + ".pmw");
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
-                new BufferedInputStream(new FileInputStream(new File(DIR, name + ".pmw")))))) {
+                new BufferedInputStream(new FileInputStream(f))))) {
             int magic = in.readInt();
-            if (magic != MAGIC && magic != MAGIC_INF) throw new IOException("bad save file");
-            SaveGame s = new SaveGame();
-            s.infinite = magic == MAGIC_INF;
-            if (!s.infinite) s.chunks = in.readInt();
-            s.hostileMobs = in.readBoolean();
-            s.creative = in.readBoolean();
-            s.protection = in.readBoolean();
-            s.px = in.readDouble(); s.py = in.readDouble(); s.pz = in.readDouble();
-            s.yaw = in.readFloat(); s.pitch = in.readFloat();
-            s.health = in.readDouble();
-            s.hasSword = in.readBoolean();
-            s.logsBroken = in.readInt();
-            if (s.infinite) {
-                s.seed = in.readLong();
-                int n = in.readInt();
-                s.chunkMap = new java.util.HashMap<>();
-                for (int i = 0; i < n; i++) {
-                    long k = in.readLong();
-                    byte[] data = new byte[in.readInt()];
-                    in.readFully(data);
-                    s.chunkMap.put(k, data);
-                }
-            } else {
-                s.blocks = new byte[in.readInt()];
-                in.readFully(s.blocks);
+            if (magic == MAGIC_PMS) return loadPms(in);
+            if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
+            throw new IOException("bad save file");
+        }
+    }
+
+    private static SaveGame loadPms(DataInputStream in) throws IOException {
+        SaveGame s = new SaveGame();
+        s.infinite = in.readBoolean();
+        if (!s.infinite) s.chunks = in.readInt();
+        s.hostileMobs = in.readBoolean();
+        s.creative = in.readBoolean();
+        s.superMode = in.readBoolean();
+        s.protection = in.readBoolean();
+        s.px = in.readDouble(); s.py = in.readDouble(); s.pz = in.readDouble();
+        s.yaw = in.readFloat(); s.pitch = in.readFloat();
+        s.health = in.readDouble();
+        s.hasSword = in.readBoolean();
+        s.logsBroken = in.readInt();
+        s.timeOfDay = in.readDouble();
+        s.wave = in.readInt(); s.waveTimer = in.readDouble();
+        s.selectedSlot = in.readInt();
+        int ni = in.readInt();
+        s.inv = new int[ni];
+        for (int i = 0; i < ni; i++) s.inv[i] = in.readInt();
+        int nz = in.readInt();
+        for (int i = 0; i < nz; i++)
+            s.zombies.add(new double[]{in.readDouble(), in.readDouble(), in.readDouble(),
+                                       in.readFloat(), in.readBoolean() ? 1 : 0});
+        int nd = in.readInt();
+        for (int i = 0; i < nd; i++)
+            s.drops.add(new double[]{in.readByte(), in.readDouble(), in.readDouble(), in.readDouble()});
+        readWorld(in, s);
+        return s;
+    }
+
+    private static SaveGame loadLegacy(DataInputStream in, int magic) throws IOException {
+        SaveGame s = new SaveGame();
+        s.infinite = magic == MAGIC_INF;
+        if (!s.infinite) s.chunks = in.readInt();
+        s.hostileMobs = in.readBoolean();
+        s.creative = in.readBoolean();
+        s.protection = in.readBoolean();
+        s.px = in.readDouble(); s.py = in.readDouble(); s.pz = in.readDouble();
+        s.yaw = in.readFloat(); s.pitch = in.readFloat();
+        s.health = in.readDouble();
+        s.hasSword = in.readBoolean();
+        s.logsBroken = in.readInt();
+        readWorld(in, s);
+        return s;
+    }
+
+    private static void readWorld(DataInputStream in, SaveGame s) throws IOException {
+        if (s.infinite) {
+            s.seed = in.readLong();
+            int n = in.readInt();
+            s.chunkMap = new java.util.HashMap<>();
+            for (int i = 0; i < n; i++) {
+                long k = in.readLong();
+                byte[] data = new byte[in.readInt()];
+                in.readFully(data);
+                s.chunkMap.put(k, data);
             }
-            return s;
+        } else {
+            s.blocks = new byte[in.readInt()];
+            in.readFully(s.blocks);
         }
     }
 }

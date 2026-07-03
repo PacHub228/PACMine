@@ -82,9 +82,8 @@ public class Main {
     private double spawnTimer = 0, burnTimer = 0;
     private static final int MAX_ZOMBIES = 14;
 
-    // sword reward: chop 3 trees (4 logs each) to earn it
-    private static final int LOGS_PER_TREE = 4, TREES_NEEDED = 3;
-    private int logsBroken = 0;
+    // sword craft: collect 3 wood in the inventory and it forges itself
+    private static final int WOOD_FOR_SWORD = 3;
     private boolean hasSword = false;
     private int swordTex = 0;
 
@@ -203,7 +202,6 @@ public class Main {
         player.creative = creativeMode;
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
-        logsBroken = 0;
         zombies.clear(); drops.clear();
         java.util.Arrays.fill(inv, 0);
         timeOfDay = 0.25;
@@ -230,7 +228,7 @@ public class Main {
             player = new Player(world, s.px, s.py, s.pz);
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
-            hasSword = s.hasSword; logsBroken = s.logsBroken;
+            hasSword = s.hasSword;
             timeOfDay = s.timeOfDay; wave = s.wave; waveTimer = s.waveTimer;
             selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < hotbar.length) ? s.selectedSlot : 2;
             java.util.Arrays.fill(inv, 0);
@@ -262,7 +260,7 @@ public class Main {
         s.superMode = superMode;
         s.px = player.x; s.py = player.y; s.pz = player.z;
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
-        s.hasSword = hasSword; s.logsBroken = logsBroken;
+        s.hasSword = hasSword;
         s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
         s.selectedSlot = selectedSlot; s.inv = inv.clone();
         for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0});
@@ -292,7 +290,7 @@ public class Main {
         spawnY = sy + 1;
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
-        hasSword = false; logsBroken = 0;
+        hasSword = false;
         zombies.clear(); drops.clear();  // mobs disabled in multiplayer v1
         remotePlayers.clear(); netQueue.clear();
         multiplayer = true; isHost = true; myId = 0; worldName = null;
@@ -438,6 +436,10 @@ public class Main {
                 else if (screen == Screen.CREATE || screen == Screen.WORLD_MENU) screen = Screen.WORLDS;
                 else if (screen == Screen.JOIN) screen = Screen.MP;
                 else screen = Screen.MAIN;
+            } else if (inventoryOpen) {
+                // Esc with the inventory open just closes it
+                inventoryOpen = false;
+                grabCursor();
             } else {
                 // toggle the in-game pause menu
                 paused = !paused;
@@ -452,7 +454,7 @@ public class Main {
             return;
         }
         if (!inMenu && key == GLFW_KEY_F3 && action == GLFW_PRESS) { showDebug = !showDebug; return; }
-        if (!inMenu && key == GLFW_KEY_E && action == GLFW_PRESS) {
+        if (!inMenu && !paused && key == GLFW_KEY_E && action == GLFW_PRESS) {
             inventoryOpen = !inventoryOpen;
             glfwSetInputMode(w, GLFW_CURSOR, inventoryOpen ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
             if (!inventoryOpen) firstMouse = true;
@@ -622,10 +624,6 @@ public class Main {
         renderer.markDirty(bx, bz);
         netBlock(bx, by, bz, World.AIR);
         drops.add(new ItemDrop(world, broken, bx + 0.5, by + 0.3, bz + 0.5));  // pop out as an item
-        if (broken == World.WOOD && !hasSword) {
-            logsBroken++;
-            if (logsBroken >= LOGS_PER_TREE * TREES_NEEDED) hasSword = true;
-        }
     }
 
     /** Continuous mining while LMB is held (survival): progress depends on block type. */
@@ -666,6 +664,11 @@ public class Main {
                 broadcastMove(dt);
                 updateMining(dt);
                 updateDrops(dt);
+                // forge the sword once 3 wood have been gathered
+                if (!hasSword && inv[World.WOOD] >= WOOD_FOR_SWORD) {
+                    inv[World.WOOD] -= WOOD_FOR_SWORD;
+                    hasSword = true;
+                }
                 timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
 
                 // death, or falling into the void when protection is off
@@ -805,40 +808,6 @@ public class Main {
         drawNameTags();
         if (showDebug) drawDebug();
 
-        // HUD panel in the TOP-LEFT corner
-        float pad = 16, sz = 80;
-        float bx = pad, by = pad;             // panel origin
-        float panelW = sz + 16 + TREES_NEEDED * 34 + 16;
-        float panelH = sz + 16;
-        glDisable(GL_TEXTURE_2D);
-        glColor4f(0, 0, 0, 0.55f);            // opaque-ish backdrop
-        quad(bx, by, bx + panelW, by + panelH);
-
-        // sword icon (dim until earned)
-        float sx0 = bx + 8, sy0 = by + 8, sx1 = sx0 + sz, sy1 = sy0 + sz;
-        if (swordTex != 0) {
-            glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, swordTex);
-            glColor4f(1, 1, 1, hasSword ? 1f : 0.25f);
-            glBegin(GL_QUADS);
-            glTexCoord2f(0, 0); glVertex2f(sx0, sy0);
-            glTexCoord2f(1, 0); glVertex2f(sx1, sy0);
-            glTexCoord2f(1, 1); glVertex2f(sx1, sy1);
-            glTexCoord2f(0, 1); glVertex2f(sx0, sy1);
-            glEnd();
-            glDisable(GL_TEXTURE_2D);
-        }
-
-        // progress pips: one big square per tree needed
-        int trees = logsBroken / LOGS_PER_TREE;
-        float ps = 28, gap = 6;
-        float py0 = by + (panelH - ps) / 2;
-        for (int i = 0; i < TREES_NEEDED; i++) {
-            float px = sx1 + 12 + i * (ps + gap);
-            if (i < trees) glColor4f(0.3f, 0.9f, 0.3f, 1f);    // done = green
-            else           glColor4f(0.25f, 0.25f, 0.25f, 1f); // todo = grey
-            quad(px, py0, px + ps, py0 + ps);
-        }
         // first-person held sword in the bottom-right, tilted like it's in hand
         if (hasSword && swordTex != 0) {
             float hs = Math.min(width, height) * 0.42f; // sword size
@@ -1071,6 +1040,10 @@ public class Main {
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDisable(GL_TEXTURE_2D);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        drawMenuBackground();
 
         String title;
         switch (screen) {
@@ -1083,8 +1056,16 @@ public class Main {
             default: title = "PACMINE";
         }
         float ts = 9;
+        float tx = width/2f - Font5x7.width(title, ts)/2, ty = height * 0.12f;
+        glColor4f(0, 0, 0, 0.6f);
+        Font5x7.draw(title, tx + ts * 0.7f, ty + ts * 0.7f, ts);   // hard pixel shadow
         glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw(title, width/2f - Font5x7.width(title, ts)/2, height * 0.12f, ts);
+        Font5x7.draw(title, tx, ty, ts);
+        if (screen == Screen.MAIN) {
+            String foot = "BY PACHUB / PACPERLAR";
+            glColor4f(1, 1, 1, 0.35f);
+            Font5x7.draw(foot, 12, height - 26, 2);
+        }
 
         switch (screen) {
             case MAIN:
@@ -1102,7 +1083,9 @@ public class Main {
                 glColor3f(0.9f, 0.9f, 0.95f);
                 String prompt = connecting ? "CONNECTING..." : "ENTER HOST IP";
                 Font5x7.draw(prompt, width/2f - Font5x7.width(prompt, 4)/2, height * 0.26f, 4);
-                drawButton(menuRect(1), ipInput.toString().toUpperCase(), 0.2f, 0.2f, 0.25f);
+                String ipText = ipInput.toString().toUpperCase()
+                    + (!connecting && (glfwGetTime() % 1.0 < 0.5) ? "_" : "");
+                drawButton(menuRect(1), ipText, 0.2f, 0.2f, 0.25f);
                 drawButton(menuRect(2), "CONNECT", 0.25f, 0.6f, 0.3f);
                 drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
                 break;
@@ -1141,12 +1124,68 @@ public class Main {
                 break;
         }
 
+        glDisable(GL_BLEND);
         glEnable(GL_TEXTURE_2D);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
         glPopMatrix();
         glMatrixMode(GL_PROJECTION); glPopMatrix();
         glMatrixMode(GL_MODELVIEW);
+    }
+
+    /** Pixel-art night panorama behind the menus: sky, stars, moon, blocky hills. */
+    private void drawMenuBackground() {
+        double t = glfwGetTime();
+        // sky gradient
+        glBegin(GL_QUADS);
+        glColor3f(0.06f, 0.08f, 0.15f); glVertex2f(0, 0); glVertex2f(width, 0);
+        glColor3f(0.14f, 0.17f, 0.28f); glVertex2f(width, height * 0.8f); glVertex2f(0, height * 0.8f);
+        glEnd();
+        glColor3f(0.14f, 0.17f, 0.28f);
+        quad(0, height * 0.8f, width, height);
+        // twinkling stars
+        java.util.Random r = new java.util.Random(42);
+        for (int i = 0; i < 90; i++) {
+            float sx = r.nextFloat() * width, sy = r.nextFloat() * height * 0.55f;
+            float s = r.nextInt(10) == 0 ? 3 : 2;
+            float tw = (float) (0.35 + 0.65 * Math.abs(Math.sin(t * 1.3 + i * 1.7)));
+            glColor4f(1, 1, 1, 0.55f * tw);
+            quad(sx, sy, sx + s, sy + s);
+        }
+        // blocky moon with glow
+        float ms = 36, mx = width * 0.78f, my = height * 0.10f;
+        glColor4f(1f, 1f, 0.9f, 0.10f); quad(mx - 10, my - 10, mx + ms + 10, my + ms + 10);
+        glColor3f(0.93f, 0.94f, 0.85f);  quad(mx, my, mx + ms, my + ms);
+        glColor3f(0.78f, 0.80f, 0.70f);  quad(mx + 19, my + 8, mx + 28, my + 17);
+        quad(mx + 7, my + 21, mx + 15, my + 29);
+        // far + near hills
+        drawHills(0.60f, 0.055f, 0.17f, 0.26f, 0.21f, 0.13f, 0.16f, 0.19f, 0);
+        drawHills(0.76f, 0.075f, 0.33f, 0.55f, 0.26f, 0.27f, 0.20f, 0.13f, 3);
+        // dark fade at the bottom so buttons stay readable
+        glBegin(GL_QUADS);
+        glColor4f(0, 0, 0, 0);     glVertex2f(0, height * 0.5f); glVertex2f(width, height * 0.5f);
+        glColor4f(0, 0, 0, 0.45f); glVertex2f(width, height);    glVertex2f(0, height);
+        glEnd();
+    }
+
+    /** One layer of block-column hills. Base/amp relative to height; grass + dirt colours. */
+    private void drawHills(float base, float amp, float gr, float gg, float gb,
+                           float dr, float dg, float db, int phase) {
+        int b = 22;   // "block" size in px
+        for (int x = 0; x < width + b; x += b) {
+            double tt = (double) x / Math.max(width, 1);
+            float gy = (float) (height * (base + Math.sin(tt * 7 + phase * 1.7) * amp
+                                              + Math.sin(tt * 19 + phase) * amp * 0.5));
+            gy = ((int) (gy / b)) * b;
+            for (float y = gy; y < height; y += b) {
+                boolean top = y == gy;
+                // subtle per-block shade variation, like the terrain textures
+                float v = (((x / b) * 31 + ((int) (y / b)) * 17) % 3) * 0.02f - 0.02f;
+                if (top) glColor3f(gr + v, gg + v, gb + v);
+                else     glColor3f(dr + v, dg + v, db + v);
+                quad(x, y, x + b, y + b);
+            }
+        }
     }
 
     private String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -1171,10 +1210,13 @@ public class Main {
         glColor4f(0, 0, 0, 0.5f);
         quad(0, 0, width, height);
 
-        glColor3f(0.85f, 0.95f, 0.6f);
         String title = "PAUSED";
         float ts = 9;
-        Font5x7.draw(title, width/2f - Font5x7.width(title, ts)/2, height * 0.2f, ts);
+        float tx = width/2f - Font5x7.width(title, ts)/2, ty = height * 0.2f;
+        glColor4f(0, 0, 0, 0.6f);
+        Font5x7.draw(title, tx + ts * 0.7f, ty + ts * 0.7f, ts);
+        glColor3f(0.85f, 0.95f, 0.6f);
+        Font5x7.draw(title, tx, ty, ts);
 
         drawButton(menuRect(0), "CONTINUE", 0.25f, 0.55f, 0.3f);
         drawButton(menuRect(1), "SAVE WORLD", 0.3f, 0.45f, 0.6f);
@@ -1189,17 +1231,40 @@ public class Main {
         glMatrixMode(GL_MODELVIEW);
     }
 
+    /** Menu button: pixel shadow, dark tinted body, accent stripe + border, hover glow. */
     private void drawButton(float[] r, String label, float cr, float cg, float cb) {
         boolean hover = inRect(r, mouseX, mouseY);
-        float m = hover ? 1.3f : 1f;
-        glColor3f(cr * m, cg * m, cb * m);
+        boolean blend = glIsEnabled(GL_BLEND);
+        if (!blend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
+        // hard pixel drop shadow
+        glColor4f(0, 0, 0, 0.4f);
+        quad(r[0] + 4, r[1] + 4, r[2] + 4, r[3] + 4);
+        // body: dark panel tinted with the accent colour
+        float m = hover ? 0.55f : 0.30f;
+        glColor4f(0.08f + cr * m, 0.09f + cg * m, 0.12f + cb * m, 0.92f);
         quad(r[0], r[1], r[2], r[3]);
-        // label centered, shrunk to fit the button width
+        // top bevel light
+        glColor4f(1, 1, 1, hover ? 0.20f : 0.08f);
+        quad(r[0], r[1], r[2], r[1] + 3);
+        // border
+        float bm = hover ? 1.7f : 0.9f;
+        glColor4f(Math.min(1, cr * bm), Math.min(1, cg * bm), Math.min(1, cb * bm), hover ? 1f : 0.7f);
+        float t = 2;
+        quad(r[0], r[1], r[2], r[1] + t); quad(r[0], r[3] - t, r[2], r[3]);
+        quad(r[0], r[1], r[0] + t, r[3]); quad(r[2] - t, r[1], r[2], r[3]);
+        // accent stripe on the left
+        glColor3f(Math.min(1, cr * 1.5f), Math.min(1, cg * 1.5f), Math.min(1, cb * 1.5f));
+        quad(r[0], r[1], r[0] + 6, r[3]);
+        // label centered, shrunk to fit, with a small shadow
         float bw = r[2] - r[0];
         float ls = Math.min(5f, (bw - 24) / (label.length() * 6));
-        glColor3f(1, 1, 1);
         float lw = Font5x7.width(label, ls), lh = 7 * ls;
-        Font5x7.draw(label, (r[0] + r[2]) / 2 - lw / 2, (r[1] + r[3]) / 2 - lh / 2, ls);
+        float lx = (r[0] + r[2]) / 2 - lw / 2, ly = (r[1] + r[3]) / 2 - lh / 2;
+        glColor4f(0, 0, 0, 0.5f);
+        Font5x7.draw(label, lx + 2, ly + 2, ls);
+        glColor3f(1, 1, 1);
+        Font5x7.draw(label, lx, ly, ls);
+        if (!blend) glDisable(GL_BLEND);
     }
 
     /** Row of hearts at the bottom-centre showing the player's health. */
@@ -1247,14 +1312,14 @@ public class Main {
             superMode ? ("SUPER  wave " + wave + ", zombies " + zombies.size())
                       : (multiplayer ? ("Multiplayer: " + (isHost ? "host" : "client") + ", players " + (remotePlayers.size() + 1)) : "Singleplayer"),
         };
-        float sz = 2f, lh = 9 * sz, x = 8, y = 130; // below the sword/progress panel
+        float sz = 2f, lh = 9 * sz, x = 8, y = 12; // top-left corner
         glDisable(GL_TEXTURE_2D);
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glColor4f(0, 0, 0, 0.5f);
         quad(x - 4, y - 4, x + 320, y + lines.length * lh + 4);
         glColor3f(0.8f, 1f, 0.7f);
         for (String ln : lines) { Font5x7.draw(ln, x, y, sz); y += lh; }
-        glDisable(GL_BLEND);
+        // keep GL_BLEND on: the held sword is drawn after this and needs alpha
     }
 
     /** Draw nicknames (and a blue premium tick) above remote players. */

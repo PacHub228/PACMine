@@ -9,7 +9,7 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - First-person movement with gravity, jumping and AABB collision
 - Place / break blocks via raycasting (6 block types + unbreakable bedrock)
 - Textured blocks loaded from `assets/` into a runtime texture atlas
-- Chop 3 trees to craft a **sword**, shown first-person in your hand
+- Have 3 wood in your inventory and a **sword** forges itself, shown first-person in your hand
 - **Zombies** that chase the player; kill them with the sword
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font
 - Invisible walls at the world edges

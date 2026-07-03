@@ -27,8 +27,11 @@ public class LauncherMain {
     static final Path PROFILE = HOME.resolve("profile.properties");
     static final boolean WINDOWS = System.getProperty("os.name").toLowerCase().contains("win");
 
-    static final Color BG = new Color(0x20242E), PANEL = new Color(0x2A2F3B),
-                       ACCENT = new Color(0xD9F299), TEXT = new Color(0xE6E8EC), SUB = new Color(0x9AA0AC);
+    static final Color BG = new Color(0x171A21), PANEL = new Color(0x21252F),
+                       PANEL_HI = new Color(0x2B3040), BORDER = new Color(0x333A4A),
+                       ACCENT = new Color(0xC6E86B), ACCENT_HI = new Color(0xDBF791),
+                       TEXT = new Color(0xE8EAEF), SUB = new Color(0x8B93A3);
+    static final Font UI = new Font("SansSerif", Font.PLAIN, 13);
 
     static JLabel status, versionInfo, account;
     static JProgressBar bar;
@@ -44,114 +47,479 @@ public class LauncherMain {
     }
 
     // ---------------- UI ----------------
+
+    /** Flat rounded button. accent=true gives it the lime "PLAY" style. */
+    static class FlatButton extends JButton {
+        final boolean accent;
+        boolean hover;
+        FlatButton(String text, boolean accent) {
+            super(text);
+            this.accent = accent;
+            setContentAreaFilled(false);
+            setFocusPainted(false);
+            setBorderPainted(false);
+            setOpaque(false);
+            setFont(accent ? new Font("SansSerif", Font.BOLD, 16) : UI.deriveFont(Font.BOLD));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setBorder(BorderFactory.createEmptyBorder(10, 20, 10, 20));
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
+                @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
+            });
+        }
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight();
+            boolean press = getModel().isPressed();
+            if (accent) {
+                Color top = press ? ACCENT : hover ? ACCENT_HI : ACCENT;
+                Color bot = press ? new Color(0x9DBF48) : new Color(0xA9CE54);
+                if (!isEnabled()) { top = PANEL_HI; bot = PANEL_HI; }
+                g.setPaint(new GradientPaint(0, 0, top, 0, h, bot));
+                g.fillRoundRect(0, 0, w, h, 14, 14);
+                if (isEnabled()) {
+                    g.setColor(new Color(255, 255, 255, 70));
+                    g.drawLine(8, 2, w - 8, 2);
+                }
+            } else {
+                g.setColor(!isEnabled() ? PANEL : press ? BG : hover ? PANEL_HI : PANEL);
+                g.fillRoundRect(0, 0, w, h, 12, 12);
+                g.setColor(hover && isEnabled() ? SUB : BORDER);
+                g.drawRoundRect(0, 0, w - 1, h - 1, 12, 12);
+            }
+            g.dispose();
+            setForeground(!isEnabled() ? SUB : accent ? new Color(0x1E2409) : TEXT);
+            super.paintComponent(g0);
+        }
+    }
+
+    /** Rounded card panel used for grouping sections. */
+    static class Card extends JPanel {
+        Card(LayoutManager lm) {
+            super(lm);
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 16));
+        }
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(PANEL);
+            g.fillRoundRect(0, 0, getWidth(), getHeight(), 16, 16);
+            g.setColor(BORDER);
+            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 16, 16);
+            g.dispose();
+            super.paintComponent(g0);
+        }
+    }
+
+    /** Pixel-art voxel landscape banner, painted procedurally (no assets needed). */
+    static class Hero extends JPanel {
+        Hero() { setOpaque(false); setLayout(new BorderLayout()); }
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            int w = getWidth(), h = getHeight();
+            Shape clip = new java.awt.geom.RoundRectangle2D.Float(0, 0, w, h, 16, 16);
+            g.setClip(clip);
+            // night-dusk sky
+            g.setPaint(new GradientPaint(0, 0, new Color(0x232B4A), 0, h, new Color(0x36415F)));
+            g.fillRect(0, 0, w, h);
+            // stars (deterministic)
+            java.util.Random r = new java.util.Random(7);
+            for (int i = 0; i < 60; i++) {
+                int sx = r.nextInt(Math.max(w, 1)), sy = r.nextInt(Math.max(h * 2 / 3, 1));
+                g.setColor(new Color(255, 255, 255, 40 + r.nextInt(120)));
+                int s = r.nextInt(10) == 0 ? 3 : 2;
+                g.fillRect(sx, sy, s, s);
+            }
+            // pixel moon (square, blocky)
+            int ms = 26, mx = w - 90, my = 24;
+            g.setColor(new Color(255, 255, 230, 25));
+            g.fillRect(mx - 8, my - 8, ms + 16, ms + 16);
+            g.setColor(new Color(0xEDEFD8));
+            g.fillRect(mx, my, ms, ms);
+            g.setColor(new Color(0xC9CCB2));
+            g.fillRect(mx + 14, my + 6, 7, 7);
+            g.fillRect(mx + 5, my + 16, 6, 6);
+            // blocky terrain: far hills then near hills
+            int b = 12;
+            paintHills(g, w, h, b, 0.48, new Color(0x3E5C43), new Color(0x35434E), new Color(0x2C3742), 40);
+            paintHills(g, w, h, b, 0.70, new Color(0x6FA84E), new Color(0x5B4433), new Color(0x47505F), 0);
+            // pixel trees on the near layer
+            r = new java.util.Random(3);
+            for (int tx = 60; tx < w - 60; tx += 130 + r.nextInt(90)) {
+                int ground = groundY(tx, w, h, 0.70);
+                paintTree(g, tx, ground, b);
+            }
+            // dark gradient at the bottom so text stays readable
+            g.setPaint(new GradientPaint(0, h - 70, new Color(0, 0, 0, 0), 0, h, new Color(0, 0, 0, 140)));
+            g.fillRect(0, h - 70, w, 70);
+            // title with hard pixel shadow
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            Font tf = new Font("Monospaced", Font.BOLD, 46);
+            g.setFont(tf);
+            g.setColor(new Color(0, 0, 0, 160));
+            g.drawString("PACMINE", 27, h - 21);
+            g.setColor(ACCENT);
+            g.drawString("PACMINE", 24, h - 24);
+            g.setFont(UI);
+            g.setColor(new Color(255, 255, 255, 190));
+            g.drawString("voxel sandbox • survival • multiplayer", 26, h - 8);
+            // frame border
+            g.setColor(BORDER);
+            g.draw(new java.awt.geom.RoundRectangle2D.Float(0, 0, w - 1, h - 1, 16, 16));
+            g.dispose();
+        }
+        static int groundY(int x, int w, int h, double base) {
+            double t = x / (double) w;
+            double y = base + 0.10 * Math.sin(t * 9) + 0.06 * Math.sin(t * 23 + 1.7) + 0.03 * Math.sin(t * 51);
+            return (int) (y * h);
+        }
+        static void paintHills(Graphics2D g, int w, int h, int b, double base, Color grass, Color dirt, Color stone, int dim) {
+            for (int x = 0; x < w; x += b) {
+                int gy = (groundY(x, w, h, base) / b) * b;
+                for (int y = gy; y < h; y += b) {
+                    Color c = y == gy ? grass : y < gy + 3 * b ? dirt : stone;
+                    if (dim > 0) c = new Color(Math.max(c.getRed() - dim, 0), Math.max(c.getGreen() - dim, 0), Math.max(c.getBlue() - dim, 0));
+                    // subtle per-block shade variation like the game's textures
+                    int v = ((x / b) * 31 + (y / b) * 17) % 3 * 6 - 6;
+                    g.setColor(new Color(clamp(c.getRed() + v), clamp(c.getGreen() + v), clamp(c.getBlue() + v)));
+                    g.fillRect(x, y, b, b);
+                }
+            }
+        }
+        static void paintTree(Graphics2D g, int x, int ground, int b) {
+            x = (x / b) * b; ground = (ground / b) * b;
+            g.setColor(new Color(0x6B4B2A));
+            g.fillRect(x, ground - 3 * b, b, 3 * b);
+            g.setColor(new Color(0x4F7D3A));
+            g.fillRect(x - b, ground - 5 * b, 3 * b, 2 * b);
+            g.fillRect(x, ground - 6 * b, b, b);
+            g.setColor(new Color(0x5C9144));
+            g.fillRect(x - b, ground - 5 * b, b, b);
+        }
+        static int clamp(int v) { return Math.max(0, Math.min(255, v)); }
+    }
+
+    /** Dark scrollbar matching the theme. */
+    static class DarkScrollBarUI extends javax.swing.plaf.basic.BasicScrollBarUI {
+        @Override protected void configureScrollBarColors() { thumbColor = BORDER; trackColor = PANEL; }
+        @Override protected JButton createDecreaseButton(int o) { return zeroButton(); }
+        @Override protected JButton createIncreaseButton(int o) { return zeroButton(); }
+        static JButton zeroButton() { JButton b = new JButton(); b.setPreferredSize(new Dimension(0, 0)); return b; }
+        @Override protected void paintThumb(Graphics g0, JComponent c, Rectangle r) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(isDragging ? SUB : BORDER);
+            g.fillRoundRect(r.x + 2, r.y + 2, r.width - 4, r.height - 4, 8, 8);
+            g.dispose();
+        }
+        @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {}
+    }
+
+    static JCheckBox checkBox(String text) {
+        JCheckBox cb = new JCheckBox(text);
+        cb.setOpaque(false); cb.setForeground(TEXT); cb.setFont(UI);
+        cb.setFocusPainted(false);
+        cb.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        cb.setIconTextGap(8);
+        cb.setIcon(new Icon() {
+            public int getIconWidth() { return 17; } public int getIconHeight() { return 17; }
+            public void paintIcon(Component c, Graphics g0, int x, int y) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                boolean sel = ((JCheckBox) c).isSelected();
+                g.setColor(sel ? ACCENT : PANEL_HI);
+                g.fillRoundRect(x, y, 17, 17, 6, 6);
+                g.setColor(sel ? ACCENT : BORDER);
+                g.drawRoundRect(x, y, 16, 16, 6, 6);
+                if (sel) {
+                    g.setColor(new Color(0x1E2409));
+                    g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.drawPolyline(new int[]{x + 4, x + 7, x + 13}, new int[]{y + 9, y + 12, y + 5}, 3);
+                }
+                g.dispose();
+            }
+        });
+        return cb;
+    }
+
+    static void styleCombo(JComboBox<String> box) {
+        box.setFont(UI);
+        box.setBackground(PANEL_HI); box.setForeground(TEXT);
+        box.setFocusable(false);
+        box.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        box.setUI(new javax.swing.plaf.basic.BasicComboBoxUI() {
+            @Override protected JButton createArrowButton() {
+                JButton b = new JButton() {
+                    @Override protected void paintComponent(Graphics g0) {
+                        Graphics2D g = (Graphics2D) g0.create();
+                        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g.setColor(PANEL_HI); g.fillRect(0, 0, getWidth(), getHeight());
+                        g.setColor(SUB);
+                        int cx = getWidth() / 2, cy = getHeight() / 2;
+                        g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                        g.drawPolyline(new int[]{cx - 4, cx, cx + 4}, new int[]{cy - 2, cy + 3, cy - 2}, 3);
+                        g.dispose();
+                    }
+                };
+                b.setBorder(BorderFactory.createEmptyBorder());
+                b.setContentAreaFilled(false);
+                return b;
+            }
+            @Override public void paintCurrentValueBackground(Graphics g, Rectangle b, boolean focus) {
+                g.setColor(PANEL_HI); g.fillRect(b.x, b.y, b.width, b.height);
+            }
+        });
+        box.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(BORDER),
+            BorderFactory.createEmptyBorder(4, 8, 4, 4)));
+        box.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> l, Object v, int i, boolean sel, boolean foc) {
+                super.getListCellRendererComponent(l, v, i, sel, foc);
+                setBackground(sel ? BORDER : PANEL_HI); setForeground(TEXT);
+                setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+                return this;
+            }
+        });
+    }
+
+    /** Frameless-window title bar: app name, drag-to-move, minimize/close. */
+    static JPanel titleBar(JFrame f) {
+        JPanel tb = new JPanel(new BorderLayout());
+        tb.setOpaque(false);
+        tb.setBorder(BorderFactory.createEmptyBorder(10, 16, 6, 10));
+        JLabel t = new JLabel("PACMINE LAUNCHER");
+        t.setFont(new Font("Monospaced", Font.BOLD, 12));
+        t.setForeground(SUB);
+        tb.add(t, BorderLayout.WEST);
+
+        JPanel wb = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        wb.setOpaque(false);
+        wb.add(windowButton("min", f)); wb.add(windowButton("close", f));
+        tb.add(wb, BorderLayout.EAST);
+
+        final Point[] drag = new Point[1];
+        tb.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mousePressed(java.awt.event.MouseEvent e) { drag[0] = e.getPoint(); }
+        });
+        tb.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override public void mouseDragged(java.awt.event.MouseEvent e) {
+                if (drag[0] == null) return;
+                Point p = f.getLocation();
+                f.setLocation(p.x + e.getX() - drag[0].x, p.y + e.getY() - drag[0].y);
+            }
+        });
+        return tb;
+    }
+
+    static JButton windowButton(String kind, JFrame f) {
+        JButton b = new JButton() {
+            boolean hover;
+            { addMouseListener(new java.awt.event.MouseAdapter() {
+                  @Override public void mouseEntered(java.awt.event.MouseEvent e) { hover = true; repaint(); }
+                  @Override public void mouseExited(java.awt.event.MouseEvent e)  { hover = false; repaint(); }
+              }); }
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (hover) {
+                    g.setColor(kind.equals("close") ? new Color(0xC44A4A) : PANEL_HI);
+                    g.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
+                }
+                g.setColor(hover ? TEXT : SUB);
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int cx = getWidth() / 2, cy = getHeight() / 2;
+                if (kind.equals("close")) { g.drawLine(cx - 4, cy - 4, cx + 4, cy + 4); g.drawLine(cx + 4, cy - 4, cx - 4, cy + 4); }
+                else g.drawLine(cx - 4, cy + 3, cx + 4, cy + 3);
+                g.dispose();
+            }
+        };
+        b.setPreferredSize(new Dimension(30, 24));
+        b.setContentAreaFilled(false);
+        b.setBorderPainted(false);
+        b.setFocusPainted(false);
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        b.addActionListener(e -> { if (kind.equals("close")) System.exit(0); else f.setState(Frame.ICONIFIED); });
+        return b;
+    }
+
     static void buildUi() {
+        JFrame f = createFrame();
+        f.setVisible(true);
+        fetchVersionsAsync();
+        checkUpdateAsync();
+    }
+
+    static JFrame createFrame() {
         JFrame f = new JFrame("PACMine Launcher");
         f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        f.setSize(620, 460);
+        f.setUndecorated(true);
+        f.setSize(760, 560);
         f.setLocationRelativeTo(null);
+        f.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                f.setShape(new java.awt.geom.RoundRectangle2D.Float(0, 0, f.getWidth(), f.getHeight(), 18, 18));
+            }
+        });
 
-        JPanel root = new JPanel(new BorderLayout(12, 12));
-        root.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
-        root.setBackground(BG);
+        JPanel root = new JPanel(new BorderLayout(0, 0)) {
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setPaint(new GradientPaint(0, 0, BG, 0, getHeight(), new Color(0x12141A)));
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.dispose();
+            }
+        };
+        root.setBorder(BorderFactory.createLineBorder(BORDER));
 
-        // header
-        JPanel header = new JPanel(new BorderLayout());
-        header.setOpaque(false);
-        JLabel title = new JLabel("PACMINE");
-        title.setFont(new Font("Monospaced", Font.BOLD, 40));
-        title.setForeground(ACCENT);
-        versionInfo = new JLabel("checking...");
-        versionInfo.setForeground(SUB);
+        // top: custom titlebar + hero banner
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        top.add(titleBar(f), BorderLayout.NORTH);
+
+        Hero hero = new Hero();
+        hero.setPreferredSize(new Dimension(0, 170));
+        hero.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 14));
+        versionInfo = new JLabel("проверка версии...");
+        versionInfo.setFont(UI);
+        versionInfo.setForeground(new Color(255, 255, 255, 210));
         versionInfo.setHorizontalAlignment(SwingConstants.RIGHT);
-        header.add(title, BorderLayout.WEST);
-        header.add(versionInfo, BorderLayout.EAST);
-        root.add(header, BorderLayout.NORTH);
+        versionInfo.setVerticalAlignment(SwingConstants.BOTTOM);
+        hero.add(versionInfo, BorderLayout.SOUTH);
+        JPanel heroWrap = new JPanel(new BorderLayout());
+        heroWrap.setOpaque(false);
+        heroWrap.setBorder(BorderFactory.createEmptyBorder(2, 16, 0, 16));
+        heroWrap.add(hero, BorderLayout.CENTER);
+        top.add(heroWrap, BorderLayout.CENTER);
+        root.add(top, BorderLayout.NORTH);
 
-        // center: controls + log
-        JPanel center = new JPanel(new BorderLayout(8, 8));
+        // center: version + account cards side by side, then log
+        JPanel center = new JPanel(new BorderLayout(0, 12));
         center.setOpaque(false);
+        center.setBorder(BorderFactory.createEmptyBorder(14, 16, 12, 16));
 
-        JPanel controls = new JPanel(new GridBagLayout());
-        controls.setOpaque(false);
+        JPanel cards = new JPanel(new GridLayout(1, 2, 12, 0));
+        cards.setOpaque(false);
+
+        Card verCard = new Card(new GridBagLayout());
         GridBagConstraints g = new GridBagConstraints();
-        g.insets = new Insets(4, 4, 4, 4); g.fill = GridBagConstraints.HORIZONTAL; g.gridx = 0; g.gridy = 0;
+        g.insets = new Insets(3, 0, 3, 0); g.fill = GridBagConstraints.HORIZONTAL;
+        g.gridx = 0; g.gridy = 0; g.weightx = 1; g.anchor = GridBagConstraints.WEST;
 
-        JLabel vlab = new JLabel("Version:"); vlab.setForeground(TEXT);
-        controls.add(vlab, g);
+        JLabel vlab = new JLabel("ВЕРСИЯ ИГРЫ");
+        vlab.setForeground(SUB); vlab.setFont(new Font("SansSerif", Font.BOLD, 11));
+        verCard.add(vlab, g);
         versionBox = new JComboBox<>(new String[]{MAIN_LABEL});
+        styleCombo(versionBox);
         versionBox.setSelectedItem(MAIN_LABEL);
         versionBox.addActionListener(e -> { saveCfg(); checkUpdateAsync(); });
-        g.gridx = 1; g.weightx = 1; controls.add(versionBox, g);
+        g.gridy = 1; verCard.add(versionBox, g);
 
-        devBox = new JCheckBox("Версия из коммитов (dev, последний main)");
-        devBox.setOpaque(false); devBox.setForeground(TEXT);
+        devBox = checkBox("Dev-сборка (последний коммит main)");
         devBox.setSelected(Boolean.parseBoolean(cfg.getProperty("dev", "false")));
         devBox.addActionListener(e -> {
             versionBox.setEnabled(!devBox.isSelected());
             saveCfg(); checkUpdateAsync();
         });
         versionBox.setEnabled(!devBox.isSelected());
-        g.gridx = 0; g.gridy = 3; g.gridwidth = 2; g.weightx = 0; controls.add(devBox, g);
+        g.gridy = 2; verCard.add(devBox, g);
 
-        swGl = new JCheckBox("Software OpenGL (for virtual machines)");
-        swGl.setOpaque(false); swGl.setForeground(TEXT);
+        swGl = checkBox("Software OpenGL (для ВМ)");
         swGl.setSelected(Boolean.parseBoolean(cfg.getProperty("vm", "false")));
         swGl.setVisible(WINDOWS);
         swGl.addActionListener(e -> saveCfg());
-        g.gridx = 0; g.gridy = 1; g.gridwidth = 2; g.weightx = 0; controls.add(swGl, g);
+        g.gridy = 3; verCard.add(swGl, g);
+        cards.add(verCard);
 
-        // account row
-        JPanel acc = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        acc.setOpaque(false);
-        account = new JLabel(); account.setForeground(TEXT);
-        loginBtn = new JButton("Войти через сайт");
-        guestBtn = new JButton("Играть без лицензии");
+        Card accCard = new Card(new GridBagLayout());
+        GridBagConstraints a = new GridBagConstraints();
+        a.insets = new Insets(3, 0, 3, 0); a.fill = GridBagConstraints.HORIZONTAL;
+        a.gridx = 0; a.gridy = 0; a.weightx = 1; a.gridwidth = 2;
+        JLabel alab = new JLabel("АККАУНТ");
+        alab.setForeground(SUB); alab.setFont(new Font("SansSerif", Font.BOLD, 11));
+        accCard.add(alab, a);
+        account = new JLabel(); account.setForeground(TEXT); account.setFont(UI.deriveFont(Font.BOLD, 14f));
+        a.gridy = 1; accCard.add(account, a);
+        loginBtn = new FlatButton("Войти через сайт", false);
+        guestBtn = new FlatButton("Без лицензии", false);
+        loginBtn.setFont(UI); guestBtn.setFont(UI);
+        loginBtn.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
+        guestBtn.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
         loginBtn.addActionListener(e -> loginViaSite());
         guestBtn.addActionListener(e -> playAsGuest());
-        acc.add(account); acc.add(loginBtn); acc.add(guestBtn);
-        g.gridx = 0; g.gridy = 2; g.gridwidth = 2; controls.add(acc, g);
+        a.gridy = 2; a.gridwidth = 1; a.insets = new Insets(6, 0, 0, 6); accCard.add(loginBtn, a);
+        a.gridx = 1; a.insets = new Insets(6, 0, 0, 0); accCard.add(guestBtn, a);
+        cards.add(accCard);
         refreshAccount();
 
-        center.add(controls, BorderLayout.NORTH);
+        center.add(cards, BorderLayout.NORTH);
 
         log = new JTextArea();
         log.setEditable(false);
-        log.setBackground(PANEL); log.setForeground(SUB);
+        log.setBackground(new Color(0x12141A)); log.setForeground(SUB);
+        log.setCaretColor(TEXT);
         log.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        log.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        log.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         JScrollPane sp = new JScrollPane(log);
-        sp.setBorder(BorderFactory.createLineBorder(PANEL));
+        sp.setBorder(BorderFactory.createLineBorder(BORDER));
+        sp.getVerticalScrollBar().setUI(new DarkScrollBarUI());
+        sp.getVerticalScrollBar().setPreferredSize(new Dimension(10, 0));
+        sp.getViewport().setBackground(new Color(0x12141A));
         center.add(sp, BorderLayout.CENTER);
         root.add(center, BorderLayout.CENTER);
 
-        // bottom: status + progress + buttons
-        JPanel bottom = new JPanel(new BorderLayout(8, 8));
+        // bottom bar: folder/update, status + progress, big PLAY
+        JPanel bottom = new JPanel(new BorderLayout(14, 0));
         bottom.setOpaque(false);
-        status = new JLabel("Ready"); status.setForeground(TEXT);
-        bar = new JProgressBar(0, 100); bar.setStringPainted(true);
-        JPanel statusRow = new JPanel(new BorderLayout(8, 0)); statusRow.setOpaque(false);
-        statusRow.add(status, BorderLayout.WEST);
-        statusRow.add(bar, BorderLayout.CENTER);
-        bottom.add(statusRow, BorderLayout.NORTH);
+        bottom.setBorder(BorderFactory.createEmptyBorder(0, 16, 16, 16));
 
-        JPanel buttons = new JPanel(new GridLayout(1, 3, 10, 0));
-        buttons.setOpaque(false);
-        openFolder = new JButton("OPEN FOLDER");
-        update = new JButton("UPDATE");
-        play = new JButton("PLAY");
-        play.setFont(new Font("SansSerif", Font.BOLD, 16));
+        JPanel leftBtns = new JPanel(new GridLayout(1, 2, 8, 0));
+        leftBtns.setOpaque(false);
+        openFolder = new FlatButton("Папка", false);
+        update = new FlatButton("Обновить", false);
         openFolder.addActionListener(e -> openGameFolder());
         update.addActionListener(e -> run(true));
+        leftBtns.add(openFolder); leftBtns.add(update);
+        bottom.add(leftBtns, BorderLayout.WEST);
+
+        JPanel mid = new JPanel();
+        mid.setOpaque(false);
+        mid.setLayout(new BoxLayout(mid, BoxLayout.Y_AXIS));
+        status = new JLabel("Готово"); status.setForeground(SUB); status.setFont(UI);
+        status.setAlignmentX(0f);
+        bar = new JProgressBar(0, 100);
+        bar.setBorderPainted(false);
+        bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 6));
+        bar.setPreferredSize(new Dimension(100, 6));
+        bar.setAlignmentX(0f);
+        bar.setUI(new javax.swing.plaf.basic.BasicProgressBarUI() {
+            @Override protected void paintDeterminate(Graphics g0, JComponent c) {
+                Graphics2D g2 = (Graphics2D) g0.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = c.getWidth(), h = c.getHeight();
+                g2.setColor(PANEL_HI);
+                g2.fillRoundRect(0, 0, w, h, h, h);
+                int fill = (int) (w * progressBar.getPercentComplete());
+                if (fill > 0) { g2.setColor(ACCENT); g2.fillRoundRect(0, 0, Math.max(fill, h), h, h, h); }
+                g2.dispose();
+            }
+        });
+        mid.add(Box.createVerticalGlue());
+        mid.add(status);
+        mid.add(Box.createVerticalStrut(6));
+        mid.add(bar);
+        mid.add(Box.createVerticalGlue());
+        bottom.add(mid, BorderLayout.CENTER);
+
+        play = new FlatButton("ИГРАТЬ", true);
+        play.setPreferredSize(new Dimension(190, 50));
         play.addActionListener(e -> run(false));
-        buttons.add(openFolder); buttons.add(update); buttons.add(play);
-        bottom.add(buttons, BorderLayout.SOUTH);
+        bottom.add(play, BorderLayout.EAST);
         root.add(bottom, BorderLayout.SOUTH);
 
         f.setContentPane(root);
-        f.setVisible(true);
-
-        fetchVersionsAsync();
-        checkUpdateAsync();
+        return f;
     }
 
     // ---------------- account ----------------

@@ -11,6 +11,7 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - Textured blocks loaded from `assets/` into a runtime texture atlas
 - Have 3 wood in your inventory and a **sword** forges itself, shown first-person in your hand
 - **Zombies** that chase the player; kill them with the sword
+- **Animals** (pig, cow, chicken) roam in daylight; they drop a healing heart when killed
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font
 - Invisible walls at the world edges
 

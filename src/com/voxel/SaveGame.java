@@ -17,6 +17,7 @@ import java.util.zip.GZIPOutputStream;
 public class SaveGame {
     private static final int MAGIC_PMS  = 0x504D5331;  // "PMS1" full save
     private static final int MAGIC_PMS2 = 0x504D5332;  // "PMS2" adds zombie type + hp
+    private static final int MAGIC_PMS3 = 0x504D5333;  // "PMS3" adds animals
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
@@ -37,6 +38,7 @@ public class SaveGame {
     public int[] inv = new int[16];
     public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat, type, hp}
     public List<double[]> drops = new ArrayList<>();    // {type, x, y, z}
+    public List<double[]> animals = new ArrayList<>();  // {type, x, y, z, yaw}
 
     // infinite worlds
     public boolean infinite;
@@ -75,7 +77,7 @@ public class SaveGame {
         DIR.mkdirs();
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(
                 new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pms")))))) {
-            out.writeInt(MAGIC_PMS2);
+            out.writeInt(MAGIC_PMS3);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
@@ -104,6 +106,12 @@ public class SaveGame {
                 out.writeByte((byte) a[0]);
                 out.writeDouble(a[1]); out.writeDouble(a[2]); out.writeDouble(a[3]);
             }
+            out.writeInt(animals.size());
+            for (double[] a : animals) {
+                out.writeInt((int) a[0]);
+                out.writeDouble(a[1]); out.writeDouble(a[2]); out.writeDouble(a[3]);
+                out.writeFloat((float) a[4]);
+            }
             if (infinite) {
                 out.writeLong(seed);
                 out.writeInt(chunkMap.size());
@@ -126,13 +134,14 @@ public class SaveGame {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new BufferedInputStream(new FileInputStream(f))))) {
             int magic = in.readInt();
-            if (magic == MAGIC_PMS || magic == MAGIC_PMS2) return loadPms(in, magic == MAGIC_PMS2);
+            if (magic == MAGIC_PMS || magic == MAGIC_PMS2 || magic == MAGIC_PMS3)
+                return loadPms(in, magic >= MAGIC_PMS2, magic >= MAGIC_PMS3);
             if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
             throw new IOException("bad save file");
         }
     }
 
-    private static SaveGame loadPms(DataInputStream in, boolean v2) throws IOException {
+    private static SaveGame loadPms(DataInputStream in, boolean v2, boolean v3) throws IOException {
         SaveGame s = new SaveGame();
         s.infinite = in.readBoolean();
         if (!s.infinite) s.chunks = in.readInt();
@@ -163,6 +172,12 @@ public class SaveGame {
         int nd = in.readInt();
         for (int i = 0; i < nd; i++)
             s.drops.add(new double[]{in.readByte(), in.readDouble(), in.readDouble(), in.readDouble()});
+        if (v3) {
+            int na = in.readInt();
+            for (int i = 0; i < na; i++)
+                s.animals.add(new double[]{in.readInt(), in.readDouble(), in.readDouble(),
+                                           in.readDouble(), in.readFloat()});
+        }
         readWorld(in, s);
         return s;
     }

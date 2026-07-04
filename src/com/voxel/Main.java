@@ -91,6 +91,11 @@ public class Main {
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
     // dropped block items waiting to be picked up
     private final java.util.List<ItemDrop> drops = new java.util.ArrayList<>();
+    // passive animals (day spawns; killed => healing heart)
+    private final java.util.List<Animal> animals = new java.util.ArrayList<>();
+    private static final int MAX_ANIMALS = 10;
+    private double animalTimer = 0;
+    private int pigBody, pigFace, cowBody, cowFace, chickBody, chickFace;
     private int zHeadFront, zHead, zBody;
     private int pHeadFront, pHead, pBody, pBodyFront;   // remote player textures
 
@@ -168,6 +173,12 @@ public class Main {
         pHead      = TextureAtlas.loadStandalone("assets/player_head.png");
         pBody      = TextureAtlas.loadStandalone("assets/player.png");
         pBodyFront = TextureAtlas.loadStandalone("assets/player_covta_pered.png");
+        pigBody   = TextureAtlas.loadStandalone("assets/pig.png");
+        pigFace   = TextureAtlas.loadStandalone("assets/pig_face.png");
+        cowBody   = TextureAtlas.loadStandalone("assets/cow.png");
+        cowFace   = TextureAtlas.loadStandalone("assets/cow_face.png");
+        chickBody = TextureAtlas.loadStandalone("assets/chicken.png");
+        chickFace = TextureAtlas.loadStandalone("assets/chicken_face.png");
         loadProfile();
         updateTitle();
     }
@@ -202,7 +213,7 @@ public class Main {
         player.creative = creativeMode;
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
-        zombies.clear(); drops.clear();
+        zombies.clear(); drops.clear(); animals.clear();
         java.util.Arrays.fill(inv, 0);
         timeOfDay = 0.25;
         wave = 0; waveTimer = 0;
@@ -247,6 +258,12 @@ public class Main {
                 d.vx = 0; d.vy = 0; d.vz = 0;   // restored drops lie still
                 drops.add(d);
             }
+            animals.clear();
+            for (double[] a : s.animals) {
+                Animal an = new Animal(world, a[1], a[2], a[3], (int) a[0]);
+                an.yaw = (float) a[4];
+                animals.add(an);
+            }
             worldName = name;
             enterGame();
         } catch (IOException e) {
@@ -266,6 +283,7 @@ public class Main {
         s.selectedSlot = selectedSlot; s.inv = inv.clone();
         for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0, z.type, z.hp});
         for (ItemDrop d : drops) s.drops.add(new double[]{d.type, d.x, d.y, d.z});
+        for (Animal a : animals) s.animals.add(new double[]{a.type, a.x, a.y, a.z, a.yaw});
         if (world.infinite) {
             s.infinite = true; s.seed = world.seed(); s.chunkMap = world.exportChunks();
         } else {
@@ -292,7 +310,7 @@ public class Main {
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
         hasSword = false;
-        zombies.clear(); drops.clear();  // mobs disabled in multiplayer v1
+        zombies.clear(); drops.clear(); animals.clear();  // mobs disabled in multiplayer v1
         remotePlayers.clear(); netQueue.clear();
         multiplayer = true; isHost = true; myId = 0; worldName = null;
         try {
@@ -430,6 +448,52 @@ public class Main {
         }
     };
 
+    /** Animals appear only in daylight, up to a cap; existing ones stay at night. */
+    private void manageAnimals(double dt) {
+        animalTimer += dt;
+        if (!isNight() && animalTimer > 4 && animals.size() < MAX_ANIMALS) {
+            animalTimer = 0;
+            spawnAnimalNear();
+        }
+    }
+
+    private void spawnAnimalNear() {
+        double ang = Math.random() * Math.PI * 2, dist = 14 + Math.random() * 16;
+        int ax = (int) (player.x + Math.cos(ang) * dist);
+        int az = (int) (player.z + Math.sin(ang) * dist);
+        if (!world.inBounds(ax, 0, az)) return;
+        int sy = World.SY - 1;
+        while (sy > 0 && !world.isSolid(ax, sy, az)) sy--;
+        if (world.get(ax, sy, az) != World.GRASS) return;   // animals like grass
+        int type = (int) (Math.random() * 3);
+        animals.add(new Animal(world, ax + 0.5, sy + 1, az + 0.5, type));
+    }
+
+    /** Punch/slash the nearest animal in front (no sword needed): drops a heart. */
+    private boolean attackAnimal() {
+        double ex = player.x, ey = player.y + Player.EYE, ez = player.z;
+        double yr = Math.toRadians(player.yaw), pr = Math.toRadians(player.pitch);
+        double dx = -Math.sin(yr) * Math.cos(pr), dy = Math.sin(pr), dz = -Math.cos(yr) * Math.cos(pr);
+        double reach = 4.0;
+        Animal best = null; double bestT = reach;
+        for (Animal a : animals) {
+            double acy = a.y + 0.5;
+            double cx = a.x - ex, cy = acy - ey, cz = a.z - ez;
+            double t = cx * dx + cy * dy + cz * dz;
+            if (t < 0 || t > reach) continue;
+            double px = ex + dx * t, py = ey + dy * t, pz = ez + dz * t;
+            double miss = Math.sqrt((px - a.x) * (px - a.x)
+                    + (py - acy) * (py - acy) + (pz - a.z) * (pz - a.z));
+            if (miss < 1.1 && t < bestT) { bestT = t; best = a; }
+        }
+        if (best != null) {
+            animals.remove(best);
+            drops.add(new ItemDrop(world, ItemDrop.HEART, best.x, best.y + 0.4, best.z));
+            return true;
+        }
+        return false;
+    }
+
     /** Super mode: timed waves of fast, strafing, armed zombies. */
     private void manageWaves(double dt) {
         if (!zombies.isEmpty()) return;          // wait until the wave is cleared
@@ -503,8 +567,9 @@ public class Main {
         if (button == GLFW_MOUSE_BUTTON_RIGHT) placeHeld = down;
         if (down) {
             if (button == GLFW_MOUSE_BUTTON_RIGHT) { placeBlock(); return; }
-            // left click: hit a zombie if armed, else (creative) break instantly
+            // left click: hit a zombie if armed, an animal bare-handed, else break
             if (hasSword && attackZombie()) return;
+            if (!multiplayer && attackAnimal()) return;
             if (player.creative) {
                 int[] r = raycast();
                 if (r != null) breakBlock(r[0], r[1], r[2]);
@@ -674,6 +739,8 @@ public class Main {
                 if (!multiplayer) {
                     if (superMode) manageWaves(dt); else manageZombies(dt);
                     for (Zombie z : zombies) z.update(player, dt, zombieWorld);
+                    manageAnimals(dt);
+                    for (Animal a : animals) a.update(dt);
                 }
                 broadcastMove(dt);
                 updateMining(dt);
@@ -703,7 +770,7 @@ public class Main {
             setupCamera();
             renderer.render(player.x, player.z);
             renderDrops();
-            if (!multiplayer) renderZombies();
+            if (!multiplayer) { renderZombies(); renderAnimals(); }
             renderRemotePlayers();
             drawHud();
             if (paused) drawPauseMenu();
@@ -861,7 +928,12 @@ public class Main {
             if (d.expired()) { it.remove(); continue; }
             double dx = d.x - player.x, dy = d.y - player.y, dz = d.z - player.z;
             if (d.age > 0.4 && dx * dx + dz * dz < 1.7 && dy > -1.0 && dy < 2.0) {
-                if (d.type >= 0 && d.type < inv.length) inv[d.type]++;
+                if (d.type == ItemDrop.HEART) {
+                    if (player.health >= Player.MAX_HEARTS) continue;   // full: leave it lying
+                    player.health = Math.min(Player.MAX_HEARTS, player.health + 1);
+                } else if (d.type >= 0 && d.type < inv.length) {
+                    inv[d.type]++;
+                }
                 it.remove();
             }
         }
@@ -871,7 +943,6 @@ public class Main {
     private void renderDrops() {
         if (drops.isEmpty()) return;
         glDisable(GL_CULL_FACE);
-        atlas.bind();
         glColor3f(1, 1, 1);
         for (ItemDrop d : drops) {
             glPushMatrix();
@@ -879,12 +950,24 @@ public class Main {
             glTranslatef((float) d.x, (float) (d.y + 0.12 + bob), (float) d.z);
             glRotatef((float) (d.age * 60 % 360), 0, 1, 0);
             float s = 0.16f;
-            glBegin(GL_QUADS);
-            for (int dir = 0; dir < 6; dir++) {
-                float[] uv = atlas.uv(atlas.tileFor(d.type, dir == 4 ? 0 : dir == 5 ? 1 : 2));
-                dropFace(dir, s, uv);
+            if (d.type == ItemDrop.HEART) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBindTexture(GL_TEXTURE_2D, heartFull);
+                float[] uv = {0, 0, 1, 1};
+                glBegin(GL_QUADS);
+                for (int dir = 0; dir < 6; dir++) dropFace(dir, s, uv);
+                glEnd();
+                glDisable(GL_BLEND);
+            } else {
+                atlas.bind();
+                glBegin(GL_QUADS);
+                for (int dir = 0; dir < 6; dir++) {
+                    float[] uv = atlas.uv(atlas.tileFor(d.type, dir == 4 ? 0 : dir == 5 ? 1 : 2));
+                    dropFace(dir, s, uv);
+                }
+                glEnd();
             }
-            glEnd();
             glPopMatrix();
         }
         glEnable(GL_CULL_FACE);
@@ -903,6 +986,39 @@ public class Main {
         }
     }
     private void tv2(float u, float v, float x, float y, float z) { glTexCoord2f(u, v); glVertex3f(x, y, z); }
+
+    /** Draw animals as a horizontal body box + a head box with a face on +Z. */
+    private void renderAnimals() {
+        if (animals.isEmpty()) return;
+        glDisable(GL_CULL_FACE);
+        glColor3f(1, 1, 1);
+        for (Animal a : animals) {
+            glPushMatrix();
+            glTranslatef((float) a.x, (float) a.y, (float) a.z);
+            glRotatef(a.yaw, 0, 1, 0);
+            double[] body, head;
+            int bodyTex, faceTex;
+            switch (a.type) {
+                case Animal.COW:
+                    body = new double[]{-0.40, 0.30, -0.50, 0.40, 0.95, 0.50};
+                    head = new double[]{-0.20, 0.60, 0.45, 0.20, 1.00, 0.85};
+                    bodyTex = cowBody; faceTex = cowFace; break;
+                case Animal.CHICKEN:
+                    body = new double[]{-0.18, 0.10, -0.24, 0.18, 0.48, 0.24};
+                    head = new double[]{-0.11, 0.42, 0.16, 0.11, 0.68, 0.38};
+                    bodyTex = chickBody; faceTex = chickFace; break;
+                default: // pig
+                    body = new double[]{-0.35, 0.22, -0.45, 0.35, 0.78, 0.45};
+                    head = new double[]{-0.18, 0.42, 0.40, 0.18, 0.78, 0.72};
+                    bodyTex = pigBody; faceTex = pigFace; break;
+            }
+            bindBox(bodyTex, body, -1);
+            bindBox(bodyTex, head, 0);     // head sides use the body texture
+            bindFront(faceTex, head);      // face on the +Z side
+            glPopMatrix();
+        }
+        glEnable(GL_CULL_FACE);
+    }
 
     private void renderZombies() {
         glDisable(GL_CULL_FACE); // model faces aren't carefully wound

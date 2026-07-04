@@ -6,6 +6,7 @@ package com.voxel;
  */
 public class ItemDrop {
     public static final double LIFETIME = 120;   // seconds before despawn
+    public static final byte HEART = -1;         // special drop: heals 1 heart on pickup
 
     public final byte type;
     public double x, y, z;

@@ -28,7 +28,7 @@ public class Main {
     private boolean firstMouse = true;
 
     // UI state
-    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS, MP, JOIN }
+    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS, MP, JOIN, ACH }
     private String selectedWorld = null;
 
     // multiplayer
@@ -96,6 +96,19 @@ public class Main {
     private static final int MAX_ANIMALS = 10;
     private double animalTimer = 0;
     private int pigBody, pigFace, cowBody, cowFace, chickBody, chickFace;
+
+    // achievement toast (top of the screen for a few seconds)
+    private String toastTitle = null;
+    private double toastTimer = 0;
+    private boolean wasNight = false;
+
+    /** Unlock an achievement; pops the toast on first unlock. */
+    private void award(String id) {
+        if (Achievements.unlock(id)) {
+            toastTitle = Achievements.titleOf(id);
+            toastTimer = 4;
+        }
+    }
     private int zHeadFront, zHead, zBody;
     private int pHeadFront, pHead, pBody, pBodyFront;   // remote player textures
 
@@ -484,11 +497,12 @@ public class Main {
             double px = ex + dx * t, py = ey + dy * t, pz = ez + dz * t;
             double miss = Math.sqrt((px - a.x) * (px - a.x)
                     + (py - acy) * (py - acy) + (pz - a.z) * (pz - a.z));
-            if (miss < 1.1 && t < bestT) { bestT = t; best = a; }
+            if (miss < 1.3 && t < bestT) { bestT = t; best = a; }   // generous: animals are low
         }
         if (best != null) {
             animals.remove(best);
             drops.add(new ItemDrop(world, ItemDrop.HEART, best.x, best.y + 0.4, best.z));
+            award("HUNTER");
             return true;
         }
         return false;
@@ -502,6 +516,7 @@ public class Main {
         if (waveTimer >= delay) {
             waveTimer = 0;
             wave++;
+            if (wave >= 5) award("WAVE5");
             int n = 2 + wave * 2;                 // growing waves
             for (int i = 0; i < n; i++) spawnZombieNear(true);
         }
@@ -596,7 +611,11 @@ public class Main {
             if (miss < 1.3 && t < bestT) { bestT = t; best = z; } // roughly aimed at
         }
         if (best != null) {
-            if (best.hit(1, player.x, player.z)) zombies.remove(best);  // dies only when hp runs out
+            if (best.hit(1, player.x, player.z)) {   // dies only when hp runs out
+                zombies.remove(best);
+                award("ZOMBIE");
+                if (best.type == Zombie.BRUTE) award("BRUTE");
+            }
             return true;
         }
         return false;
@@ -685,6 +704,7 @@ public class Main {
         world.set(px, py, pz, b);
         renderer.markDirty(px, pz);
         netBlock(px, py, pz, b);
+        award("BUILDER");
     }
 
     /** True if block cell (bx,by,bz) overlaps the player's AABB. */
@@ -703,6 +723,8 @@ public class Main {
         renderer.markDirty(bx, bz);
         netBlock(bx, by, bz, World.AIR);
         drops.add(new ItemDrop(world, broken, bx + 0.5, by + 0.3, bz + 0.5));  // pop out as an item
+        award("FIRST_BLOCK");
+        if (broken == World.IRON) award("MINER");
     }
 
     /** Continuous mining while LMB is held (survival): progress depends on block type. */
@@ -749,15 +771,23 @@ public class Main {
                 if (!hasSword && inv[World.WOOD] >= WOOD_FOR_SWORD) {
                     inv[World.WOOD] -= WOOD_FOR_SWORD;
                     hasSword = true;
+                    award("SWORD");
                 }
                 if (superMode) timeOfDay = 0.25;                       // Super: eternal noon
                 else timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
+
+                // survived a full night?
+                boolean night = isNight();
+                if (wasNight && !night && !player.isDead() && !multiplayer) award("NIGHT");
+                wasNight = night;
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
                     resetPlayer();
                 }
             }
+
+            if (toastTimer > 0) toastTimer -= dt;
 
             // fps counter
             fpsAccum += dt; fpsFrames++;
@@ -889,6 +919,7 @@ public class Main {
         drawHotbar();
         drawNameTags();
         if (showDebug) drawDebug();
+        drawToast();
 
         // first-person held sword in the bottom-right, tilted like it's in hand
         if (hasSword && swordTex != 0) {
@@ -931,8 +962,10 @@ public class Main {
                 if (d.type == ItemDrop.HEART) {
                     if (player.health >= Player.MAX_HEARTS) continue;   // full: leave it lying
                     player.health = Math.min(Player.MAX_HEARTS, player.health + 1);
+                    award("HEAL");
                 } else if (d.type >= 0 && d.type < inv.length) {
                     inv[d.type]++;
+                    if (d.type == World.WOOD) award("WOOD");
                 }
                 it.remove();
             }
@@ -1093,8 +1126,9 @@ public class Main {
     }
     private float[] playRect()        { return menuRect(0); }
     private float[] multiplayerRect()  { return menuRect(1); }
-    private float[] creditsRect()     { return menuRect(2); }
-    private float[] quitRect()        { return menuRect(3); }
+    private float[] achRect()         { return menuRect(2); }
+    private float[] creditsRect()     { return menuRect(3); }
+    private float[] quitRect()        { return menuRect(4); }
     private float[] backRect()        { return menuRect(6); }
 
     private boolean inRect(float[] r, double px, double py) {
@@ -1106,6 +1140,7 @@ public class Main {
             case MAIN:
                 if (inRect(playRect(), mouseX, mouseY)) { worldList = SaveGame.list(); screen = Screen.WORLDS; }
                 else if (inRect(multiplayerRect(), mouseX, mouseY)) screen = Screen.MP;
+                else if (inRect(achRect(), mouseX, mouseY)) screen = Screen.ACH;
                 else if (inRect(creditsRect(), mouseX, mouseY)) screen = Screen.CREDITS;
                 else if (inRect(quitRect(), mouseX, mouseY)) glfwSetWindowShouldClose(window, true);
                 break;
@@ -1142,6 +1177,7 @@ public class Main {
                 else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
                 break;
             case CREDITS:
+            case ACH:
                 if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
                 break;
         }
@@ -1188,6 +1224,7 @@ public class Main {
             case CREDITS: title = "CREDITS"; break;
             case MP: title = "MULTIPLAYER"; break;
             case JOIN: title = "JOIN GAME"; break;
+            case ACH: title = "ACHIEVEMENTS"; break;
             default: title = "PACMINE";
         }
         float ts = 9;
@@ -1206,6 +1243,7 @@ public class Main {
             case MAIN:
                 drawButton(playRect(),        "PLAY", 0.25f, 0.6f, 0.3f);
                 drawButton(multiplayerRect(), "MULTIPLAYER", 0.3f, 0.45f, 0.6f);
+                drawButton(achRect(),         "ACHIEVEMENTS " + Achievements.unlockedCount() + "/" + Achievements.ALL.length, 0.55f, 0.5f, 0.3f);
                 drawButton(creditsRect(),     "CREDITS", 0.45f, 0.4f, 0.55f);
                 drawButton(quitRect(),        "QUIT", 0.6f, 0.25f, 0.25f);
                 break;
@@ -1243,6 +1281,27 @@ public class Main {
                 drawButton(menuRect(4), "CREATE", 0.25f, 0.6f, 0.3f);
                 drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
                 break;
+            case ACH: {
+                float rowH = Math.min(34, (height * 0.55f) / Achievements.ALL.length);
+                float ls = rowH * 0.062f, ds = rowH * 0.045f;
+                float y = height * 0.24f;
+                float x = width / 2f - 260;
+                for (String[] a : Achievements.ALL) {
+                    boolean got = Achievements.has(a[0]);
+                    // status square
+                    glColor4f(got ? 0.4f : 0.2f, got ? 0.85f : 0.22f, got ? 0.35f : 0.26f, 1f);
+                    quad(x, y + 2, x + rowH - 10, y + rowH - 8);
+                    if (got) { glColor3f(0.9f, 1f, 0.85f); Font5x7.draw("V", x + (rowH - 10) / 2 - 3 * 1.2f, y + 5, 1.2f); }
+                    // title + description
+                    glColor4f(1, 1, 1, got ? 1f : 0.45f);
+                    Font5x7.draw(a[1], x + rowH + 2, y, ls);
+                    glColor4f(1, 1, 1, got ? 0.6f : 0.3f);
+                    Font5x7.draw(a[2], x + rowH + 2 + 210, y + rowH * 0.15f, ds);
+                    y += rowH;
+                }
+                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
+                break;
+            }
             case CREDITS:
                 String[] lines = {
                     "A VOXEL SANDBOX GAME", "", "CREATED BY", "PACHUB/PACPERLAR",
@@ -1431,6 +1490,26 @@ public class Main {
                 glDisable(GL_TEXTURE_2D);
             }
         }
+    }
+
+    /** "ACHIEVEMENT UNLOCKED" banner at the top-centre, fading out. */
+    private void drawToast() {
+        if (toastTimer <= 0 || toastTitle == null) return;
+        float alpha = (float) Math.min(1, toastTimer);   // fade in the last second
+        String head = "ACHIEVEMENT UNLOCKED!";
+        float hs = 2.2f, ts = 3.2f;
+        float w = Math.max(Font5x7.width(head, hs), Font5x7.width(toastTitle, ts)) + 40;
+        float h = 7 * hs + 7 * ts + 26;
+        float x0 = width / 2f - w / 2, y0 = 18;
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(0, 0, 0, 0.65f * alpha);
+        quad(x0, y0, x0 + w, y0 + h);
+        glColor4f(0.85f, 0.95f, 0.6f, alpha);           // accent border line
+        quad(x0, y0, x0 + w, y0 + 3);
+        glColor4f(0.85f, 0.95f, 0.6f, alpha);
+        Font5x7.draw(head, width / 2f - Font5x7.width(head, hs) / 2, y0 + 9, hs);
+        glColor4f(1, 1, 1, alpha);
+        Font5x7.draw(toastTitle, width / 2f - Font5x7.width(toastTitle, ts) / 2, y0 + 9 + 7 * hs + 8, ts);
     }
 
     /** F3 debug overlay: world/player info, time of day, next day/night flip. */

@@ -75,8 +75,8 @@ public class SaveGame {
 
     public void save(String name) throws IOException {
         DIR.mkdirs();
-        try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(
-                new BufferedOutputStream(new FileOutputStream(new File(DIR, name + ".pms")))))) {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
+        try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(buf))) {
             out.writeInt(MAGIC_PMS3);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
@@ -125,14 +125,16 @@ public class SaveGame {
                 out.write(blocks);
             }
         }
+        java.nio.file.Files.write(new File(DIR, name + ".pms").toPath(), PMCrypt.encrypt(buf.toByteArray()));
         new File(DIR, name + ".pmw").delete();   // superseded by the .pms
     }
 
     public static SaveGame load(String name) throws IOException {
         File pms = new File(DIR, name + ".pms");
         File f = pms.exists() ? pms : new File(DIR, name + ".pmw");
+        byte[] raw = PMCrypt.decrypt(java.nio.file.Files.readAllBytes(f.toPath()));
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
-                new BufferedInputStream(new FileInputStream(f))))) {
+                new ByteArrayInputStream(raw)))) {
             int magic = in.readInt();
             if (magic == MAGIC_PMS || magic == MAGIC_PMS2 || magic == MAGIC_PMS3)
                 return loadPms(in, magic >= MAGIC_PMS2, magic >= MAGIC_PMS3);

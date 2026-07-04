@@ -13,6 +13,7 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - **Zombies** that chase the player; kill them with the sword
 - **Animals** (pig, cow, chicken) roam in daylight; they drop a healing heart when killed
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font
+- **Free premium**: message [@pacmine_prem_bot](https://t.me/pacmine_prem_bot) on Telegram (`/prem YOUR_NICK`) — verified nick + a badge on servers, up to 3 accounts per Telegram
 - Invisible walls at the world edges
 
 ## Controls

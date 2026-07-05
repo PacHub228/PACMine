@@ -61,14 +61,51 @@ public class Main {
     private boolean protection = true;       // bedrock + edge barrier
     private int wave = 0; private double waveTimer = 0;
     private boolean breakHeld, placeHeld;
-    // hotbar inventory
-    private final byte[] hotbar = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL, World.IRON };
+    // Minecraft-style slot inventory: slots 0..HOT-1 are the hotbar
+    static final int HOT = 8, INV_GRID_ROWS = 3, INV_GRID_COLS = 8;
+    static final int SLOTS = HOT + INV_GRID_ROWS * INV_GRID_COLS;
+    private final byte[] slotType = new byte[SLOTS];
+    private final int[] slotCount = new int[SLOTS];
     private int selectedSlot = 2; // stone
-    private byte currentBlock() { return hotbar[selectedSlot]; }
-
-    // inventory: count of each block id; opened with E (9x9 grid)
-    private final int[] inv = new int[16];
     private boolean inventoryOpen = false;
+    // stack carried on the mouse cursor while the inventory is open
+    private byte carryType = World.AIR;
+    private int carryCount = 0;
+
+    private byte currentBlock() { return slotType[selectedSlot]; }
+
+    /** Fresh inventory: classic block types laid out in the hotbar, zero counts. */
+    private void initSlots() {
+        java.util.Arrays.fill(slotType, World.AIR);
+        java.util.Arrays.fill(slotCount, 0);
+        byte[] classic = { World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND, World.COAL, World.IRON };
+        System.arraycopy(classic, 0, slotType, 0, classic.length);
+    }
+
+    private int countOf(byte b) {
+        int n = 0;
+        for (int i = 0; i < SLOTS; i++) if (slotType[i] == b) n += slotCount[i];
+        return n;
+    }
+
+    private boolean consume(byte b, int n) {
+        if (countOf(b) < n) return false;
+        for (int i = 0; i < SLOTS && n > 0; i++)
+            if (slotType[i] == b && slotCount[i] > 0) {
+                int take = Math.min(n, slotCount[i]);
+                slotCount[i] -= take; n -= take;
+                if (slotCount[i] == 0 && i >= HOT) slotType[i] = World.AIR;  // hotbar keeps its layout
+            }
+        return true;
+    }
+
+    /** Add items: stack onto the same type, else into the first free slot. */
+    private void addItem(byte b, int n) {
+        for (int i = 0; i < SLOTS; i++) if (slotType[i] == b) { slotCount[i] += n; return; }
+        for (int i = 0; i < SLOTS; i++)
+            if (slotType[i] == World.AIR) { slotType[i] = b; slotCount[i] = n; return; }
+        // inventory full: overflow is lost (rare with 32 slots)
+    }
 
     // mining (hold to break, time depends on block)
     private int mineX = Integer.MIN_VALUE, mineY, mineZ;
@@ -144,7 +181,7 @@ public class Main {
         glfwSetCursorPosCallback(window, this::onCursor);
         glfwSetScrollCallback(window, (w, dx, dy) -> {
             if (inMenu || paused) return;
-            selectedSlot = (selectedSlot - (int) Math.signum(dy) + hotbar.length) % hotbar.length;
+            selectedSlot = (selectedSlot - (int) Math.signum(dy) + HOT) % HOT;
         });
         glfwSetCharCallback(window, (w, cp) -> {
             if (inMenu && screen == Screen.JOIN && cp < 128) {
@@ -196,16 +233,20 @@ public class Main {
         updateTitle();
     }
 
-    /** Load the profile (name + login token) and verify the license with the backend. */
+    /** Load the profile (name + login token); verify the license off-thread so the
+     *  window keeps responding even when the backend is slow or unreachable. */
     private void loadProfile() {
         java.util.Properties p = new java.util.Properties();
         java.io.File f = new java.io.File(System.getProperty("user.home"), ".pacmine/profile.properties");
         try (java.io.InputStream in = new java.io.FileInputStream(f)) { p.load(in); } catch (Exception ignored) {}
         String name = p.getProperty("name", "Player").trim();
         profileToken = p.getProperty("token", "").trim();
-        String[] v = AuthClient.verify(profileToken);   // license check
-        if (v != null) { profileName = v[0]; profilePremium = Boolean.parseBoolean(v[1]); }
-        else { profileName = name.isEmpty() ? "Player" : name; profilePremium = false; }
+        profileName = name.isEmpty() ? "Player" : name;
+        profilePremium = false;
+        new Thread(() -> {
+            String[] v = AuthClient.verify(profileToken);   // license check (network)
+            if (v != null) { profileName = v[0]; profilePremium = v[1].equals("true"); }
+        }, "license-check").start();
     }
 
     /** Create a brand-new world of the chosen size and start playing it. chunks==1 => infinite. */
@@ -227,7 +268,7 @@ public class Main {
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
         zombies.clear(); drops.clear(); animals.clear();
-        java.util.Arrays.fill(inv, 0);
+        initSlots();
         timeOfDay = 0.25;
         wave = 0; waveTimer = 0;
         worldName = SaveGame.nextName();
@@ -254,9 +295,17 @@ public class Main {
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
             hasSword = s.hasSword;
             timeOfDay = s.timeOfDay; wave = s.wave; waveTimer = s.waveTimer;
-            selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < hotbar.length) ? s.selectedSlot : 2;
-            java.util.Arrays.fill(inv, 0);
-            System.arraycopy(s.inv, 0, inv, 0, Math.min(s.inv.length, inv.length));
+            selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < HOT) ? s.selectedSlot : 2;
+            if (s.slotType != null) {                       // PMS4 slot inventory
+                initSlots();
+                int n = Math.min(s.slotType.length, SLOTS);
+                System.arraycopy(s.slotType, 0, slotType, 0, n);
+                System.arraycopy(s.slotCount, 0, slotCount, 0, n);
+            } else {                                        // legacy: counts per type
+                initSlots();
+                for (int i = 0; i < HOT; i++)
+                    if (slotType[i] < s.inv.length) slotCount[i] = s.inv[slotType[i]];
+            }
             spawnX = world.infinite ? 0 : world.sx / 2; spawnY = (int) s.py; spawnZ = world.infinite ? 0 : world.sz / 2;
             zombies.clear();
             for (double[] a : s.zombies) {
@@ -293,7 +342,8 @@ public class Main {
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
         s.hasSword = hasSword;
         s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
-        s.selectedSlot = selectedSlot; s.inv = inv.clone();
+        s.selectedSlot = selectedSlot;
+        s.slotType = slotType.clone(); s.slotCount = slotCount.clone();
         for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0, z.type, z.hp});
         for (ItemDrop d : drops) s.drops.add(new double[]{d.type, d.x, d.y, d.z});
         for (Animal a : animals) s.animals.add(new double[]{a.type, a.x, a.y, a.z, a.yaw});
@@ -324,6 +374,7 @@ public class Main {
         player.creative = creativeMode; player.borderWalls = protection;
         hasSword = false;
         zombies.clear(); drops.clear(); animals.clear();  // mobs disabled in multiplayer v1
+        initSlots();
         remotePlayers.clear(); netQueue.clear();
         multiplayer = true; isHost = true; myId = 0; worldName = null;
         try {
@@ -530,9 +581,7 @@ public class Main {
                 else if (screen == Screen.JOIN) screen = Screen.MP;
                 else screen = Screen.MAIN;
             } else if (inventoryOpen) {
-                // Esc with the inventory open just closes it
-                inventoryOpen = false;
-                grabCursor();
+                closeInventory();
             } else {
                 // toggle the in-game pause menu
                 paused = !paused;
@@ -548,14 +597,16 @@ public class Main {
         }
         if (!inMenu && key == GLFW_KEY_F3 && action == GLFW_PRESS) { showDebug = !showDebug; return; }
         if (!inMenu && !paused && key == GLFW_KEY_E && action == GLFW_PRESS) {
-            inventoryOpen = !inventoryOpen;
-            glfwSetInputMode(w, GLFW_CURSOR, inventoryOpen ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
-            if (!inventoryOpen) firstMouse = true;
+            if (inventoryOpen) closeInventory();
+            else {
+                inventoryOpen = true;
+                glfwSetInputMode(w, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
             return;
         }
         if (!inMenu && action == GLFW_PRESS && key >= GLFW_KEY_1 && key <= GLFW_KEY_9) {
             int slot = key - GLFW_KEY_1;
-            if (slot < hotbar.length) selectedSlot = slot;
+            if (slot < HOT) selectedSlot = slot;
         }
     }
 
@@ -619,6 +670,13 @@ public class Main {
             return true;
         }
         return false;
+    }
+
+    /** Close the inventory, returning any carried stack to the slots. */
+    private void closeInventory() {
+        if (carryCount > 0) { addItem(carryType, carryCount); carryType = World.AIR; carryCount = 0; }
+        inventoryOpen = false;
+        grabCursor();
     }
 
     private void grabCursor() {
@@ -697,9 +755,10 @@ public class Main {
         if (world.isSolid(px, py, pz)) return;
         if (intersectsPlayer(px, py, pz)) return;   // don't place a block inside yourself
         byte b = currentBlock();
+        if (b == World.AIR) return;
         if (!player.creative) {
-            if (inv[b] <= 0) return;     // nothing to place
-            inv[b]--;
+            if (slotCount[selectedSlot] <= 0) return;   // nothing to place
+            slotCount[selectedSlot]--;
         }
         world.set(px, py, pz, b);
         renderer.markDirty(px, pz);
@@ -768,8 +827,8 @@ public class Main {
                 updateMining(dt);
                 updateDrops(dt);
                 // forge the sword once 3 wood have been gathered
-                if (!hasSword && inv[World.WOOD] >= WOOD_FOR_SWORD) {
-                    inv[World.WOOD] -= WOOD_FOR_SWORD;
+                if (!hasSword && countOf(World.WOOD) >= WOOD_FOR_SWORD) {
+                    consume(World.WOOD, WOOD_FOR_SWORD);
                     hasSword = true;
                     award("SWORD");
                 }
@@ -963,8 +1022,8 @@ public class Main {
                     if (player.health >= Player.MAX_HEARTS) continue;   // full: leave it lying
                     player.health = Math.min(Player.MAX_HEARTS, player.health + 1);
                     award("HEAL");
-                } else if (d.type >= 0 && d.type < inv.length) {
-                    inv[d.type]++;
+                } else if (d.type >= 0) {
+                    addItem(d.type, 1);
                     if (d.type == World.WOOD) award("WOOD");
                 }
                 it.remove();
@@ -1594,28 +1653,98 @@ public class Main {
         return new float[]{sx, sy};
     }
 
-    // all block types shown in the inventory grid
-    private static final byte[] ALL_BLOCKS = {
-        World.GRASS, World.DIRT, World.STONE, World.WOOD, World.LEAVES, World.SAND,
-        World.COAL, World.IRON
+    private static final String[] BLOCK_NAMES = {
+        "AIR", "GRASS", "DIRT", "STONE", "WOOD", "LEAVES", "SAND", "BEDROCK", "COAL", "IRON"
     };
-    private float invCell = 50, invGap = 6;
-    private float invOriginX() { return width / 2f - (9 * (invCell + invGap) - invGap) / 2; }
-    private float invOriginY() { return height / 2f - (9 * (invCell + invGap) - invGap) / 2; }
 
-    private void inventoryClick() {
-        float ox = invOriginX(), oy = invOriginY();
-        for (int i = 0; i < ALL_BLOCKS.length; i++) {
-            int row = i / 9, col = i % 9;
-            float x = ox + col * (invCell + invGap), y = oy + row * (invCell + invGap);
-            if (mouseX >= x && mouseX <= x + invCell && mouseY >= y && mouseY <= y + invCell) {
-                hotbar[selectedSlot] = ALL_BLOCKS[i];  // put this block into the active hotbar slot
-                return;
+    // Minecraft-style inventory layout: 3x8 grid on top, hotbar row below
+    private static final float INV_CELL = 58, INV_GAP = 5, INV_PAD = 20;
+    private float invPanelW() { return INV_GRID_COLS * (INV_CELL + INV_GAP) - INV_GAP + INV_PAD * 2; }
+    private float invPanelH() { return 54 + INV_GRID_ROWS * (INV_CELL + INV_GAP) + 18 + INV_CELL + INV_PAD; }
+    private float invX() { return width / 2f - invPanelW() / 2; }
+    private float invY() { return height / 2f - invPanelH() / 2; }
+    private float invGridY() { return invY() + 54; }
+    private float invHotbarY() { return invGridY() + INV_GRID_ROWS * (INV_CELL + INV_GAP) + 18; }
+    private float invCellX(int col) { return invX() + INV_PAD + col * (INV_CELL + INV_GAP); }
+
+    /** Which slot the mouse is over (0..HOT-1 hotbar, HOT.. grid), or -1. */
+    private int slotAtMouse() {
+        for (int r = 0; r < INV_GRID_ROWS; r++)
+            for (int c = 0; c < INV_GRID_COLS; c++) {
+                float x = invCellX(c), y = invGridY() + r * (INV_CELL + INV_GAP);
+                if (mouseX >= x && mouseX <= x + INV_CELL && mouseY >= y && mouseY <= y + INV_CELL)
+                    return HOT + r * INV_GRID_COLS + c;
             }
+        for (int i = 0; i < HOT; i++) {
+            float x = invCellX(i), y = invHotbarY();
+            if (mouseX >= x && mouseX <= x + INV_CELL && mouseY >= y && mouseY <= y + INV_CELL)
+                return i;
+        }
+        return -1;
+    }
+
+    /** Minecraft-style click: pick up a stack / put it down / merge / swap. */
+    private void inventoryClick() {
+        int s = slotAtMouse();
+        if (s < 0) return;
+        if (carryCount == 0) {                                   // pick up
+            if (slotCount[s] > 0) {
+                carryType = slotType[s]; carryCount = slotCount[s];
+                slotType[s] = World.AIR; slotCount[s] = 0;
+            }
+        } else if (slotCount[s] == 0 || slotType[s] == World.AIR) {  // put down
+            slotType[s] = carryType; slotCount[s] = carryCount;
+            carryType = World.AIR; carryCount = 0;
+        } else if (slotType[s] == carryType) {                   // merge stacks
+            slotCount[s] += carryCount;
+            carryType = World.AIR; carryCount = 0;
+        } else {                                                 // swap
+            byte t = slotType[s]; int n = slotCount[s];
+            slotType[s] = carryType; slotCount[s] = carryCount;
+            carryType = t; carryCount = n;
         }
     }
 
-    /** 9x9 inventory overlay showing collected blocks and counts (open with E). */
+    /** One slot cell, Minecraft-style: inset bevel, flat block icon, count. */
+    private void drawSlot(float x, float y, byte b, int count, boolean sel, boolean hover) {
+        glDisable(GL_TEXTURE_2D);
+        // inset bevel: dark top/left, light bottom/right (like MC slots)
+        glColor4f(0.05f, 0.06f, 0.08f, 1f);
+        quad(x, y, x + INV_CELL, y + 2); quad(x, y, x + 2, y + INV_CELL);
+        glColor4f(0.38f, 0.42f, 0.5f, 1f);
+        quad(x, y + INV_CELL - 2, x + INV_CELL, y + INV_CELL); quad(x + INV_CELL - 2, y, x + INV_CELL, y + INV_CELL);
+        glColor4f(hover ? 0.30f : 0.18f, hover ? 0.33f : 0.20f, hover ? 0.40f : 0.26f, 1f);
+        quad(x + 2, y + 2, x + INV_CELL - 2, y + INV_CELL - 2);
+        if (sel) {   // selected hotbar slot: accent frame
+            glColor4f(0.85f, 0.95f, 0.6f, 1f);
+            float t = 2.5f;
+            quad(x - 1, y - 1, x + INV_CELL + 1, y - 1 + t); quad(x - 1, y + INV_CELL + 1 - t, x + INV_CELL + 1, y + INV_CELL + 1);
+            quad(x - 1, y - 1, x - 1 + t, y + INV_CELL + 1); quad(x + INV_CELL + 1 - t, y - 1, x + INV_CELL + 1, y + INV_CELL + 1);
+        }
+        if (b == World.AIR || count <= 0 && b == World.AIR) return;
+        boolean ghost = count <= 0;   // hotbar layout slot without items
+        glEnable(GL_TEXTURE_2D); atlas.bind();
+        float[] uv = atlas.uv(atlas.tileFor(b, 2));
+        glColor4f(1, 1, 1, ghost ? 0.3f : 1f);
+        float p = 8;
+        glBegin(GL_QUADS);
+        glTexCoord2f(uv[0], uv[1]); glVertex2f(x + p, y + p);
+        glTexCoord2f(uv[2], uv[1]); glVertex2f(x + INV_CELL - p, y + p);
+        glTexCoord2f(uv[2], uv[3]); glVertex2f(x + INV_CELL - p, y + INV_CELL - p);
+        glTexCoord2f(uv[0], uv[3]); glVertex2f(x + p, y + INV_CELL - p);
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
+        if (count > 0) {
+            String c = String.valueOf(count);
+            float cs = 2.0f, cw = Font5x7.width(c, cs);
+            glColor4f(0, 0, 0, 0.75f);
+            Font5x7.draw(c, x + INV_CELL - cw - 4, y + INV_CELL - 7 * cs - 4, cs);
+            glColor3f(1, 1, 1);
+            Font5x7.draw(c, x + INV_CELL - cw - 5, y + INV_CELL - 7 * cs - 5, cs);
+        }
+    }
+
+    /** Minecraft-style inventory (E): grid + hotbar, click to move stacks around. */
     private void drawInventory() {
         glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
         glOrtho(0, width, height, 0, -1, 1);
@@ -1624,36 +1753,56 @@ public class Main {
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         glDisable(GL_TEXTURE_2D);
-        glColor4f(0, 0, 0, 0.6f); quad(0, 0, width, height);
+        glColor4f(0, 0, 0, 0.55f); quad(0, 0, width, height);
 
-        float ox = invOriginX(), oy = invOriginY();
-        float gw = 9 * (invCell + invGap) - invGap, gh = gw;
-        glColor4f(0.16f, 0.18f, 0.24f, 0.97f); quad(ox - 14, oy - 40, ox + gw + 14, oy + gh + 14);
+        float px = invX(), py = invY(), pw = invPanelW(), ph = invPanelH();
+        glColor4f(0, 0, 0, 0.4f); quad(px + 5, py + 5, px + pw + 5, py + ph + 5);
+        glColor4f(0.22f, 0.24f, 0.30f, 0.98f); quad(px, py, px + pw, py + ph);   // MC-grey panel
+        glColor4f(0.42f, 0.46f, 0.55f, 1f);
+        float bt = 2;
+        quad(px, py, px + pw, py + bt); quad(px, py + ph - bt, px + pw, py + ph);
+        quad(px, py, px + bt, py + ph); quad(px + pw - bt, py, px + pw, py + ph);
+
+        glColor4f(0, 0, 0, 0.5f);
+        Font5x7.draw("INVENTORY", px + INV_PAD + 2, py + 15 + 2, 3);
         glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw("INVENTORY", ox, oy - 34, 4);
+        Font5x7.draw("INVENTORY", px + INV_PAD, py + 15, 3);
 
-        for (int i = 0; i < 81; i++) {
-            int row = i / 9, col = i % 9;
-            float x = ox + col * (invCell + invGap), y = oy + row * (invCell + invGap);
-            glDisable(GL_TEXTURE_2D);
-            glColor4f(0, 0, 0, 0.4f); quad(x, y, x + invCell, y + invCell);
-            if (i < ALL_BLOCKS.length) {
-                byte b = ALL_BLOCKS[i];
-                glEnable(GL_TEXTURE_2D); atlas.bind();
-                float[] uv = atlas.uv(atlas.tileFor(b, 2));
-                glColor4f(1, 1, 1, 1);
-                float p = 6;
-                glBegin(GL_QUADS);
-                glTexCoord2f(uv[0], uv[1]); glVertex2f(x + p, y + p);
-                glTexCoord2f(uv[2], uv[1]); glVertex2f(x + invCell - p, y + p);
-                glTexCoord2f(uv[2], uv[3]); glVertex2f(x + invCell - p, y + invCell - p);
-                glTexCoord2f(uv[0], uv[3]); glVertex2f(x + p, y + invCell - p);
-                glEnd();
-                glDisable(GL_TEXTURE_2D);
-                glColor3f(1, 1, 1);
-                Font5x7.draw(String.valueOf(inv[b]), x + 4, y + invCell - 14, 1.6f);
-            }
+        int hoverSlot = slotAtMouse();
+        if (hoverSlot >= 0 && slotType[hoverSlot] != World.AIR) {
+            String nm = BLOCK_NAMES[slotType[hoverSlot]];
+            glColor4f(1, 1, 1, 0.85f);
+            Font5x7.draw(nm, px + pw - INV_PAD - Font5x7.width(nm, 2.4f), py + 17, 2.4f);
         }
+
+        for (int r = 0; r < INV_GRID_ROWS; r++)
+            for (int c = 0; c < INV_GRID_COLS; c++) {
+                int s = HOT + r * INV_GRID_COLS + c;
+                drawSlot(invCellX(c), invGridY() + r * (INV_CELL + INV_GAP),
+                         slotType[s], slotCount[s], false, s == hoverSlot);
+            }
+        for (int i = 0; i < HOT; i++)
+            drawSlot(invCellX(i), invHotbarY(), slotType[i], slotCount[i],
+                     i == selectedSlot, i == hoverSlot);
+
+        // carried stack rides on the cursor, above everything
+        if (carryCount > 0) {
+            glEnable(GL_TEXTURE_2D); atlas.bind();
+            float[] uv = atlas.uv(atlas.tileFor(carryType, 2));
+            glColor4f(1, 1, 1, 1);
+            float s = 40, mx = (float) mouseX, my = (float) mouseY;
+            glBegin(GL_QUADS);
+            glTexCoord2f(uv[0], uv[1]); glVertex2f(mx - s / 2, my - s / 2);
+            glTexCoord2f(uv[2], uv[1]); glVertex2f(mx + s / 2, my - s / 2);
+            glTexCoord2f(uv[2], uv[3]); glVertex2f(mx + s / 2, my + s / 2);
+            glTexCoord2f(uv[0], uv[3]); glVertex2f(mx - s / 2, my + s / 2);
+            glEnd();
+            glDisable(GL_TEXTURE_2D);
+            String c = String.valueOf(carryCount);
+            glColor4f(0, 0, 0, 0.75f); Font5x7.draw(c, mx + s / 2 - 12, my + s / 2 - 12, 2);
+            glColor3f(1, 1, 1);        Font5x7.draw(c, mx + s / 2 - 13, my + s / 2 - 13, 2);
+        }
+
         glDisable(GL_BLEND);
         glEnable(GL_TEXTURE_2D); glEnable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST);
         glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
@@ -1661,34 +1810,36 @@ public class Main {
 
     /** Hotbar of block slots at the bottom-centre; selected slot is highlighted. */
     private void drawHotbar() {
-        int n = hotbar.length;
         float slot = 56, gap = 6, pad = 6;
-        float totalW = n * (slot + gap) - gap;
+        float totalW = HOT * (slot + gap) - gap;
         float x0 = width / 2f - totalW / 2;
         float y0 = height - slot - 18;
 
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < HOT; i++) {
             float sx = x0 + i * (slot + gap);
             boolean sel = i == selectedSlot;
-            // slot background
             glDisable(GL_TEXTURE_2D);
             glColor4f(sel ? 0.9f : 0f, sel ? 0.9f : 0f, sel ? 0.5f : 0f, sel ? 0.6f : 0.45f);
             quad(sx - 2, y0 - 2, sx + slot + 2, y0 + slot + 2);
-            // block icon from the atlas
-            glEnable(GL_TEXTURE_2D);
-            atlas.bind();
-            float[] uv = atlas.uv(atlas.tileFor(hotbar[i], 2));
-            glColor4f(1, 1, 1, 1);
-            glBegin(GL_QUADS);
-            glTexCoord2f(uv[0], uv[1]); glVertex2f(sx + pad, y0 + pad);
-            glTexCoord2f(uv[2], uv[1]); glVertex2f(sx + slot - pad, y0 + pad);
-            glTexCoord2f(uv[2], uv[3]); glVertex2f(sx + slot - pad, y0 + slot - pad);
-            glTexCoord2f(uv[0], uv[3]); glVertex2f(sx + pad, y0 + slot - pad);
-            glEnd();
-            glDisable(GL_TEXTURE_2D);
-            // count in the corner
-            glColor3f(1, 1, 1);
-            Font5x7.draw(String.valueOf(inv[hotbar[i]]), sx + 4, y0 + slot - 14, 1.5f);
+            byte b = slotType[i];
+            if (b != World.AIR) {
+                boolean ghost = slotCount[i] <= 0;
+                glEnable(GL_TEXTURE_2D);
+                atlas.bind();
+                float[] uv = atlas.uv(atlas.tileFor(b, 2));
+                glColor4f(1, 1, 1, ghost ? 0.3f : 1f);
+                glBegin(GL_QUADS);
+                glTexCoord2f(uv[0], uv[1]); glVertex2f(sx + pad, y0 + pad);
+                glTexCoord2f(uv[2], uv[1]); glVertex2f(sx + slot - pad, y0 + pad);
+                glTexCoord2f(uv[2], uv[3]); glVertex2f(sx + slot - pad, y0 + slot - pad);
+                glTexCoord2f(uv[0], uv[3]); glVertex2f(sx + pad, y0 + slot - pad);
+                glEnd();
+                glDisable(GL_TEXTURE_2D);
+                if (slotCount[i] > 0) {
+                    glColor3f(1, 1, 1);
+                    Font5x7.draw(String.valueOf(slotCount[i]), sx + 4, y0 + slot - 14, 1.5f);
+                }
+            }
         }
     }
 

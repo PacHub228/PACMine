@@ -18,6 +18,7 @@ public class SaveGame {
     private static final int MAGIC_PMS  = 0x504D5331;  // "PMS1" full save
     private static final int MAGIC_PMS2 = 0x504D5332;  // "PMS2" adds zombie type + hp
     private static final int MAGIC_PMS3 = 0x504D5333;  // "PMS3" adds animals
+    private static final int MAGIC_PMS4 = 0x504D5334;  // "PMS4" slot-based inventory
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
@@ -35,7 +36,9 @@ public class SaveGame {
     public double timeOfDay = 0.25;
     public int wave; public double waveTimer;
     public int selectedSlot = 2;
-    public int[] inv = new int[16];
+    public int[] inv = new int[16];          // legacy (PMS1-3) per-type counts
+    public byte[] slotType;                  // PMS4 slot inventory (null on legacy)
+    public int[] slotCount;
     public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat, type, hp}
     public List<double[]> drops = new ArrayList<>();    // {type, x, y, z}
     public List<double[]> animals = new ArrayList<>();  // {type, x, y, z, yaw}
@@ -77,7 +80,7 @@ public class SaveGame {
         DIR.mkdirs();
         ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(buf))) {
-            out.writeInt(MAGIC_PMS3);
+            out.writeInt(MAGIC_PMS4);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
@@ -92,8 +95,12 @@ public class SaveGame {
             out.writeDouble(timeOfDay);
             out.writeInt(wave); out.writeDouble(waveTimer);
             out.writeInt(selectedSlot);
-            out.writeInt(inv.length);
-            for (int v : inv) out.writeInt(v);
+            out.writeInt(slotType == null ? 0 : slotType.length);
+            if (slotType != null)
+                for (int i = 0; i < slotType.length; i++) {
+                    out.writeByte(slotType[i]);
+                    out.writeInt(slotCount[i]);
+                }
             out.writeInt(zombies.size());
             for (double[] a : zombies) {
                 out.writeDouble(a[0]); out.writeDouble(a[1]); out.writeDouble(a[2]);
@@ -136,14 +143,15 @@ public class SaveGame {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new ByteArrayInputStream(raw)))) {
             int magic = in.readInt();
-            if (magic == MAGIC_PMS || magic == MAGIC_PMS2 || magic == MAGIC_PMS3)
-                return loadPms(in, magic >= MAGIC_PMS2, magic >= MAGIC_PMS3);
+            if (magic >= MAGIC_PMS && magic <= MAGIC_PMS4)
+                return loadPms(in, magic - MAGIC_PMS + 1);
             if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
             throw new IOException("bad save file");
         }
     }
 
-    private static SaveGame loadPms(DataInputStream in, boolean v2, boolean v3) throws IOException {
+    private static SaveGame loadPms(DataInputStream in, int ver) throws IOException {
+        boolean v2 = ver >= 2, v3 = ver >= 3, v4 = ver >= 4;
         SaveGame s = new SaveGame();
         s.infinite = in.readBoolean();
         if (!s.infinite) s.chunks = in.readInt();
@@ -159,9 +167,16 @@ public class SaveGame {
         s.timeOfDay = in.readDouble();
         s.wave = in.readInt(); s.waveTimer = in.readDouble();
         s.selectedSlot = in.readInt();
-        int ni = in.readInt();
-        s.inv = new int[ni];
-        for (int i = 0; i < ni; i++) s.inv[i] = in.readInt();
+        if (v4) {
+            int ns = in.readInt();
+            s.slotType = new byte[ns];
+            s.slotCount = new int[ns];
+            for (int i = 0; i < ns; i++) { s.slotType[i] = in.readByte(); s.slotCount[i] = in.readInt(); }
+        } else {
+            int ni = in.readInt();
+            s.inv = new int[ni];
+            for (int i = 0; i < ni; i++) s.inv[i] = in.readInt();
+        }
         int nz = in.readInt();
         for (int i = 0; i < nz; i++) {
             double zx = in.readDouble(), zy = in.readDouble(), zz = in.readDouble();

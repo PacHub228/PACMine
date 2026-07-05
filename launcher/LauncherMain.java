@@ -38,7 +38,7 @@ public class LauncherMain {
     static JButton play, update, openFolder, loginBtn, guestBtn;
     static JComboBox<String> versionBox;
     static JCheckBox swGl, devBox;
-    static JTextArea log;
+    static JTextArea log, news;
     static final Properties cfg = new Properties();
 
     public static void main(String[] args) {
@@ -214,7 +214,10 @@ public class LauncherMain {
             g.fillRoundRect(r.x + 2, r.y + 2, r.width - 4, r.height - 4, 8, 8);
             g.dispose();
         }
-        @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {}
+        @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {
+            g.setColor(new Color(0x12141A));
+            g.fillRect(r.x, r.y, r.width, r.height);
+        }
     }
 
     static JCheckBox checkBox(String text) {
@@ -349,13 +352,14 @@ public class LauncherMain {
         f.setVisible(true);
         fetchVersionsAsync();
         checkUpdateAsync();
+        fetchNewsAsync();
     }
 
     static JFrame createFrame() {
         JFrame f = new JFrame("PACMine Launcher");
         f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         f.setUndecorated(true);
-        f.setSize(760, 560);
+        f.setSize(980, 560);
         f.setLocationRelativeTo(null);
         f.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override public void componentResized(java.awt.event.ComponentEvent e) {
@@ -455,19 +459,35 @@ public class LauncherMain {
 
         center.add(cards, BorderLayout.NORTH);
 
-        log = new JTextArea();
-        log.setEditable(false);
-        log.setBackground(new Color(0x12141A)); log.setForeground(SUB);
-        log.setCaretColor(TEXT);
-        log.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        log.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
-        JScrollPane sp = new JScrollPane(log);
-        sp.setBorder(BorderFactory.createLineBorder(BORDER));
-        sp.getVerticalScrollBar().setUI(new DarkScrollBarUI());
-        sp.getVerticalScrollBar().setPreferredSize(new Dimension(10, 0));
-        sp.getViewport().setBackground(new Color(0x12141A));
-        center.add(sp, BorderLayout.CENTER);
-        root.add(center, BorderLayout.CENTER);
+        // log lives below the cards, as before
+        log = darkArea(new Font("Monospaced", Font.PLAIN, 12));
+        JPanel logCol = new JPanel(new BorderLayout(0, 4));
+        logCol.setOpaque(false);
+        logCol.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        JLabel logLab = new JLabel("ЛОГ");
+        logLab.setForeground(SUB); logLab.setFont(new Font("SansSerif", Font.BOLD, 11));
+        logCol.add(logLab, BorderLayout.NORTH);
+        logCol.add(darkScroll(log), BorderLayout.CENTER);
+        center.add(logCol, BorderLayout.CENTER);
+
+        // news column on the LEFT of everything
+        news = darkArea(new Font("SansSerif", Font.PLAIN, 13));
+        news.setText("Загружаю новости...");
+        news.setLineWrap(true); news.setWrapStyleWord(true);
+        JPanel newsCol = new JPanel(new BorderLayout(0, 4));
+        newsCol.setOpaque(false);
+        newsCol.setBorder(BorderFactory.createEmptyBorder(14, 16, 12, 0));
+        newsCol.setPreferredSize(new Dimension(300, 0));
+        JLabel newsLab = new JLabel("НОВОСТИ");
+        newsLab.setForeground(SUB); newsLab.setFont(new Font("SansSerif", Font.BOLD, 11));
+        newsCol.add(newsLab, BorderLayout.NORTH);
+        newsCol.add(darkScroll(news), BorderLayout.CENTER);
+
+        JPanel body = new JPanel(new BorderLayout());
+        body.setOpaque(false);
+        body.add(newsCol, BorderLayout.WEST);
+        body.add(center, BorderLayout.CENTER);
+        root.add(body, BorderLayout.CENTER);
 
         // bottom bar: folder/update, status + progress, big PLAY
         JPanel bottom = new JPanel(new BorderLayout(14, 0));
@@ -522,16 +542,80 @@ public class LauncherMain {
         return f;
     }
 
+    static JTextArea darkArea(Font font) {
+        JTextArea a = new JTextArea();
+        a.setEditable(false);
+        a.setBackground(new Color(0x12141A)); a.setForeground(SUB);
+        a.setCaretColor(TEXT);
+        a.setFont(font);
+        a.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        return a;
+    }
+
+    static JScrollPane darkScroll(JTextArea a) {
+        JScrollPane sp = new JScrollPane(a);
+        sp.setBorder(BorderFactory.createLineBorder(BORDER));
+        sp.getVerticalScrollBar().setUI(new DarkScrollBarUI());
+        sp.getVerticalScrollBar().setPreferredSize(new Dimension(10, 0));
+        sp.getVerticalScrollBar().setBackground(new Color(0x12141A));
+        sp.getViewport().setBackground(new Color(0x12141A));
+        return sp;
+    }
+
+    /** Fetch the latest release changelogs from GitHub into the news tab. */
+    static void fetchNewsAsync() {
+        new Thread(() -> {
+            try {
+                String json = httpGet("https://api.github.com/repos/" + REPO + "/releases?per_page=4");
+                Matcher m = Pattern.compile(
+                    "\"tag_name\"\\s*:\\s*\"([^\"]+)\".*?\"name\"\\s*:\\s*\"([^\"]*)\".*?\"body\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+                    Pattern.DOTALL).matcher(json);
+                StringBuilder sb = new StringBuilder();
+                while (m.find()) {
+                    String name = m.group(2).isEmpty() ? m.group(1) : m.group(2);
+                    sb.append("=== ").append(name).append(" ===\n");
+                    sb.append(unescape(m.group(3)).replaceAll("(?m)^#+\\s*", "").replace("**", "").replace("`", ""));
+                    sb.append("\n\n");
+                }
+                String text = sb.length() == 0 ? "Новостей пока нет." : sb.toString();
+                SwingUtilities.invokeLater(() -> { news.setText(text); news.setCaretPosition(0); });
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> news.setText("Не удалось загрузить новости: " + e.getMessage()));
+            }
+        }, "launcher-news").start();
+    }
+
+    static String unescape(String s) {
+        return s.replace("\\r", "").replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\");
+    }
+
     // ---------------- account ----------------
     static void refreshAccount() {
         Properties p = readProfile();
         String name = p.getProperty("name", "");
-        boolean hasToken = !p.getProperty("token", "").isEmpty();
+        String token = p.getProperty("token", "");
         SwingUtilities.invokeLater(() -> {
-            if (hasToken) account.setText("Аккаунт: " + name + "  ✓");
+            if (!token.isEmpty()) account.setText("Аккаунт: " + name);
             else if (!name.isEmpty()) account.setText("Гость: " + name);
             else account.setText("Не выполнен вход");
         });
+        if (token.isEmpty()) return;
+        new Thread(() -> {          // live premium check against the backend
+            try {
+                String resp = httpGetAny(BACKEND + "/api/me?token=" + java.net.URLEncoder.encode(token, "UTF-8"));
+                if (resp.contains("bad token")) {
+                    SwingUtilities.invokeLater(() -> account.setText("<html>Аккаунт: " + name
+                        + "  <font color='#e0a050'>сессия истекла — войди заново</font></html>"));
+                    return;
+                }
+                boolean prem = resp.contains("\"premium\":true");
+                Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]*)\"").matcher(resp);
+                String nm = m.find() ? m.group(1) : name;
+                SwingUtilities.invokeLater(() -> account.setText("<html>Аккаунт: " + nm
+                    + (prem ? "  <font color='#c6e86b'><b>✓ PREMIUM</b></font>"
+                            : "  <font color='#8b93a3'>FREE</font>") + "</html>"));
+            } catch (Exception ignored) {}
+        }, "launcher-premium").start();
     }
 
     static void loginViaSite() {
@@ -791,6 +875,18 @@ public class LauncherMain {
             extract(zip, GAMEDIR);
             throw new IOException("No access to the JDK; placed DLLs in the game folder. Run as administrator if OpenGL still fails.");
         } finally { Files.deleteIfExists(zip); }
+    }
+
+    /** GET that also returns error bodies (4xx) instead of throwing. */
+    static String httpGetAny(String url) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "PACMine-Launcher");
+        c.setConnectTimeout(8000); c.setReadTimeout(8000);
+        InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        if (in != null) { byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); }
+        return bo.toString("UTF-8");
     }
 
     static String httpGet(String url) throws IOException {

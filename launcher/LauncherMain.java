@@ -567,15 +567,22 @@ public class LauncherMain {
         new Thread(() -> {
             try {
                 String json = httpGet("https://api.github.com/repos/" + REPO + "/releases?per_page=4");
-                Matcher m = Pattern.compile(
-                    "\"tag_name\"\\s*:\\s*\"([^\"]+)\".*?\"name\"\\s*:\\s*\"([^\"]*)\".*?\"body\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
-                    Pattern.DOTALL).matcher(json);
                 StringBuilder sb = new StringBuilder();
-                while (m.find()) {
-                    String name = m.group(2).isEmpty() ? m.group(1) : m.group(2);
-                    sb.append("=== ").append(name).append(" ===\n");
-                    sb.append(unescape(m.group(3)).replaceAll("(?m)^#+\\s*", "").replace("**", "").replace("`", ""));
+                int pos = 0;
+                while (true) {
+                    int t = json.indexOf("\"tag_name\"", pos);
+                    if (t < 0) break;
+                    int next = json.indexOf("\"tag_name\"", t + 10);
+                    int end = next < 0 ? json.length() : next;
+                    String tag = jsonString(json, t);
+                    int nm = json.indexOf("\"name\"", t);
+                    String name = (nm >= 0 && nm < end) ? jsonString(json, nm) : "";
+                    int bd = json.indexOf("\"body\"", t);
+                    String body = (bd >= 0 && bd < end) ? jsonString(json, bd) : "";
+                    sb.append("=== ").append(name.isEmpty() ? tag : name).append(" ===\n");
+                    sb.append(body.replaceAll("(?m)^#+\\s*", "").replace("**", "").replace("`", ""));
                     sb.append("\n\n");
+                    pos = end;
                 }
                 String text = sb.length() == 0 ? "Новостей пока нет." : sb.toString();
                 SwingUtilities.invokeLater(() -> { news.setText(text); news.setCaretPosition(0); });
@@ -585,8 +592,35 @@ public class LauncherMain {
         }, "launcher-news").start();
     }
 
-    static String unescape(String s) {
-        return s.replace("\\r", "").replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\");
+    /** Read the JSON string value that follows the key at `keyIdx` ("key":"..."),
+     *  unescaping as we go. No regex — immune to catastrophic backtracking. */
+    static String jsonString(String json, int keyIdx) {
+        int i = json.indexOf(':', keyIdx);
+        if (i < 0) return "";
+        i++;
+        while (i < json.length() && Character.isWhitespace(json.charAt(i))) i++;
+        if (i >= json.length() || json.charAt(i) != '"') return "";   // null or non-string
+        StringBuilder out = new StringBuilder();
+        for (i++; i < json.length(); i++) {
+            char ch = json.charAt(i);
+            if (ch == '"') break;
+            if (ch == '\\' && i + 1 < json.length()) {
+                char e = json.charAt(++i);
+                switch (e) {
+                    case 'n': out.append('\n'); break;
+                    case 'r': break;
+                    case 't': out.append('\t'); break;
+                    case 'u':
+                        if (i + 4 < json.length()) {
+                            out.append((char) Integer.parseInt(json.substring(i + 1, i + 5), 16));
+                            i += 4;
+                        }
+                        break;
+                    default: out.append(e);
+                }
+            } else out.append(ch);
+        }
+        return out.toString();
     }
 
     // ---------------- account ----------------

@@ -70,8 +70,13 @@ java -jar PACMine-Server.jar
 - `saves/world.pms` — мир (автосохранение + сохранение при остановке)
 - `server.log` — лог
 
-Команды консоли: `list` (кто онлайн), `save`, `stop`. Игроки подключаются через
+Команды консоли: `list` (кто онлайн), `plugins`, `save`, `stop`. Игроки подключаются через
 МУЛЬТИПЛЕЕР → JOIN GAME по IP сервера. LWJGL ядру не нужен — работает на любом VPS.
+
+### 🔌 Lua-плагины
+Поставь `plugins=true` в server.properties — ядро создаст папку `plugins/` с документацией
+и будет грузить из неё `.lua` файлы (компилированный `.luac` не принимается). API `pacmine.*`:
+события join/leave/block/tick, get_block/set_block (с синхронизацией игрокам), players, kick.
 
 ---
 

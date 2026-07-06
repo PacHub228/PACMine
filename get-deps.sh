@@ -14,4 +14,8 @@ for m in "${mods[@]}"; do
   [ -f "$nat" ] || curl -sSL -o "$nat" "$BASE/$m/$V/$m-$V-natives-linux.jar"
   echo "ok: $m"
 done
+# LuaJ: Lua interpreter for server plugins
+LUAJ="$LIB/luaj-jse-3.0.1.jar"
+[ -f "$LUAJ" ] || curl -sSL -o "$LUAJ" "https://repo1.maven.org/maven2/org/luaj/luaj-jse/3.0.1/luaj-jse-3.0.1.jar"
+echo "ok: luaj"
 echo "All deps in $LIB"

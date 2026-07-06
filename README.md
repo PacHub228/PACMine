@@ -56,7 +56,9 @@ it with `bash make-server.sh`), drop it into an empty folder and run:
 java -jar PACMine-Server.jar
 ```
 On first run it creates `server.properties`, `saves/world.pms` and `server.log`
-right there. Console commands: `list`, `save`, `stop`. Headless — no LWJGL needed.
+right there. Console commands: `list`, `plugins`, `save`, `stop`. Headless — no LWJGL needed.
+Set `plugins=true` to load **Lua plugins** from `plugins/` (docs are generated there):
+join/leave/block/tick events, get_block/set_block synced to all players, kick and more.
 
 ## Launcher
 A small Swing launcher downloads, builds and runs the latest version from GitHub:

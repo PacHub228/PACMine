@@ -27,6 +27,7 @@ public class ServerMain {
     static SaveGame meta;
     static String worldName;
     static final Map<Integer, String> players = new ConcurrentHashMap<>();
+    static PluginManager plugins;
     static volatile boolean running = true;
     static PrintWriter logFile;
 
@@ -88,6 +89,20 @@ public class ServerMain {
         server.start(port);
         log("Listening on port " + port + ". Type 'help' for commands.");
 
+        // Lua plugins
+        if (Boolean.parseBoolean(props.getProperty("plugins", "false"))) {
+            plugins = new PluginManager(world, server, ServerMain::log);
+            plugins.loadAll();
+            Thread ticker = new Thread(() -> {
+                long start = System.currentTimeMillis();
+                while (running) {
+                    sleep(1000);
+                    plugins.fire("tick", (System.currentTimeMillis() - start) / 1000);
+                }
+            }, "plugin-tick");
+            ticker.setDaemon(true); ticker.start();
+        }
+
         // drain events so we can log joins/leaves and answer `list`
         Thread drain = new Thread(() -> {
             while (running) {
@@ -97,9 +112,15 @@ public class ServerMain {
                         players.put(e.id, e.name);
                         String badge = e.premium ? "license: PREMIUM" : e.licensed ? "license: yes" : "no license (guest)";
                         log("+ " + e.name + " joined [" + badge + "]");
+                        if (plugins != null) plugins.fire("join", e.name, e.premium, e.licensed);
                     } else if (e.type == NetEvent.LEAVE) {
                         String n = players.remove(e.id);
-                        if (n != null) log("- " + n + " left");
+                        if (n != null) {
+                            log("- " + n + " left");
+                            if (plugins != null) plugins.fire("leave", n);
+                        }
+                    } else if (e.type == NetEvent.BLOCK && plugins != null) {
+                        plugins.fire("block", e.x, e.y, e.z, e.b);
                     }
                 }
                 sleep(200);
@@ -123,7 +144,9 @@ public class ServerMain {
         while (running && (line = in.readLine()) != null) {
             switch (line.trim().toLowerCase()) {
                 case "": break;
-                case "help": log("Commands: list (online players), save (save world), stop (save and quit)"); break;
+                case "help": log("Commands: list (online players), plugins (loaded plugins), save (save world), stop (save and quit)"); break;
+                case "plugins": log(plugins == null ? "Plugins disabled (plugins=false)"
+                    : "Plugins (" + plugins.loadedPlugins().size() + "): " + String.join(", ", plugins.loadedPlugins())); break;
                 case "list": log("Online (" + players.size() + "): " + String.join(", ", players.values())); break;
                 case "save": saveWorld(); log("Saved '" + worldName + "'"); break;
                 case "stop": running = false; break;
@@ -223,6 +246,8 @@ public class ServerMain {
                 world-name=world
                 # autosave-seconds: how often the world is written to disk
                 autosave-seconds=120
+                # plugins: load Lua plugins from the plugins/ folder (plain .lua only)
+                plugins=false
                 """);
             log("Created default server.properties");
         }

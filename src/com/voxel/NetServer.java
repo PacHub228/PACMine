@@ -120,6 +120,28 @@ public class NetServer {
         }
     }
 
+    // ---- called from server-side code (console, plugins) ----
+    /** Apply a block change server-side and broadcast it to every client. */
+    public void applyBlock(int x, int y, int z, byte b) {
+        world.set(x, y, z, b);
+        if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
+        for (Conn c : clients) c.sendBlock(x, y, z, b);
+    }
+
+    /** Names of connected, identified players. */
+    public java.util.List<String> onlineNames() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (Conn c : clients) if (c.name != null) out.add(c.name);
+        return out;
+    }
+
+    /** Disconnect a player by name (case-insensitive). Returns true if found. */
+    public boolean kick(String name) {
+        for (Conn c : clients)
+            if (c.name != null && c.name.equalsIgnoreCase(name)) { c.close(); return true; }
+        return false;
+    }
+
     // ---- called from the host (main thread) ----
     public void hostMoved(double x, double y, double z, float yaw, float pitch) {
         for (Conn o : clients) o.sendMove(0, x, y, z, yaw, pitch);

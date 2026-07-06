@@ -48,6 +48,16 @@ run.bat
 > ⚠️ **The Windows build is unverified and may have issues.** All versions are
 > tested on **Linux Fedora 44 Workstation**.
 
+## Dedicated server
+
+Minecraft-style server core: grab `PACMine-Server.jar` from the releases (or build
+it with `bash make-server.sh`), drop it into an empty folder and run:
+```bash
+java -jar PACMine-Server.jar
+```
+On first run it creates `server.properties`, `saves/world.pms` and `server.log`
+right there. Console commands: `list`, `save`, `stop`. Headless — no LWJGL needed.
+
 ## Launcher
 A small Swing launcher downloads, builds and runs the latest version from GitHub:
 - Linux/macOS: `cd launcher && ./launcher.sh`

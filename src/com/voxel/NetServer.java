@@ -13,13 +13,21 @@ import java.util.Queue;
  * actions back to the host via a shared event queue.
  */
 public class NetServer {
-    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4, T_NAME = 5;
+    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4, T_NAME = 5, T_WORLD_INF = 6, T_SPAWN = 7;
     public static final int PORT = 25565;
 
     private final World world;
     private final boolean protection;
     private final Queue<NetEvent> hostQueue;       // events delivered to the host thread
     private final List<Conn> clients = new CopyOnWriteArrayList<>();
+    // chunks touched by edits (infinite worlds): only these are sent to joiners,
+    // untouched terrain regenerates identically client-side from the seed
+    private final java.util.Set<Long> editedChunks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    // last known position per player name: reconnect where you left off
+    private final java.util.Map<String, double[]> playerPos = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public java.util.Map<String, double[]> exportPositions() { return playerPos; }
+    public void importPositions(java.util.Map<String, double[]> m) { playerPos.putAll(m); }
     private final AtomicInteger nextId = new AtomicInteger(1); // host is 0
     private ServerSocket ss;
     private volatile boolean running;
@@ -34,8 +42,10 @@ public class NetServer {
     public void setDedicated() { hasHost = false; }
     public void setHostInfo(String name, boolean premium) { hostName = name; hostPremium = premium; }
 
-    public void start() throws IOException {
-        ss = new ServerSocket(PORT);
+    public void start() throws IOException { start(PORT); }
+
+    public void start(int port) throws IOException {
+        ss = new ServerSocket(port);
         running = true;
         Thread t = new Thread(this::acceptLoop, "net-accept");
         t.setDaemon(true);
@@ -72,21 +82,28 @@ public class NetServer {
                 if (type == T_MOVE) {
                     double x = c.in.readDouble(), y = c.in.readDouble(), z = c.in.readDouble();
                     float yaw = c.in.readFloat(), pitch = c.in.readFloat();
+                    if (c.name != null) playerPos.put(c.name.toLowerCase(), new double[]{x, y, z});
                     enqueueMove(c.id, x, y, z, yaw, pitch);
                     for (Conn o : clients) if (o != c) o.sendMove(c.id, x, y, z, yaw, pitch);
                 } else if (type == T_BLOCK) {
                     int x = c.in.readInt(), y = c.in.readInt(), z = c.in.readInt();
                     byte b = c.in.readByte();
                     world.set(x, y, z, b);
+                    if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
                     enqueueBlock(x, y, z, b);
                     for (Conn o : clients) if (o != c) o.sendBlock(x, y, z, b);
                 } else if (type == T_NAME) {
+                    c.in.readInt();                          // id placeholder the client sends
                     String provided = c.in.readUTF();
                     String token = c.in.readUTF();
                     String[] v = AuthClient.verify(token);   // server-side license check
-                    if (v != null) { c.name = v[0]; c.premium = Boolean.parseBoolean(v[1]); }
+                    boolean licensed = v != null;
+                    if (licensed) { c.name = v[0]; c.premium = Boolean.parseBoolean(v[1]); }
                     else { c.name = provided.isEmpty() ? "Player" : provided; c.premium = false; }
-                    enqueueName(c.id, c.name, c.premium);
+                    enqueueName(c.id, c.name, c.premium, licensed);
+                    // returning player: send them back where they logged out
+                    double[] p = playerPos.get(c.name.toLowerCase());
+                    if (p != null) c.sendSpawn(p[0], p[1], p[2]);
                     for (Conn o : clients) if (o != c) o.sendName(c.id, c.name, c.premium);
                     // tell the newcomer about everyone already here (host + other clients)
                     if (hasHost) c.sendName(0, hostName, hostPremium);
@@ -125,8 +142,9 @@ public class NetServer {
     private void enqueueLeave(int id) {
         NetEvent e = new NetEvent(); e.type = NetEvent.LEAVE; e.id = id; hostQueue.add(e);
     }
-    private void enqueueName(int id, String name, boolean premium) {
-        NetEvent e = new NetEvent(); e.type = NetEvent.NAME; e.id = id; e.name = name; e.premium = premium; hostQueue.add(e);
+    private void enqueueName(int id, String name, boolean premium, boolean licensed) {
+        NetEvent e = new NetEvent(); e.type = NetEvent.NAME; e.id = id; e.name = name;
+        e.premium = premium; e.licensed = licensed; hostQueue.add(e);
     }
 
     /** One connected client. */
@@ -144,9 +162,25 @@ public class NetServer {
             try {
                 synchronized (out) {
                     out.writeByte(T_ASSIGN); out.writeInt(id);
-                    byte[] data = world.data();
-                    out.writeByte(T_WORLD); out.writeInt(world.cx); out.writeBoolean(protection);
-                    out.writeInt(data.length); out.write(data);
+                    if (world.infinite) {
+                        // seed + edited chunks only; the client regenerates the rest
+                        out.writeByte(T_WORLD_INF);
+                        out.writeLong(world.seed());
+                        out.writeBoolean(protection);
+                        java.util.Map<Long, byte[]> all = world.exportChunks();
+                        java.util.List<Long> keys = new java.util.ArrayList<>(editedChunks);
+                        out.writeInt(keys.size());
+                        for (long k : keys) {
+                            byte[] ch = all.get(k);
+                            out.writeLong(k);
+                            out.writeInt(ch.length);
+                            out.write(ch);
+                        }
+                    } else {
+                        byte[] data = world.data();
+                        out.writeByte(T_WORLD); out.writeInt(world.cx); out.writeBoolean(protection);
+                        out.writeInt(data.length); out.write(data);
+                    }
                     out.flush();
                 }
             } catch (IOException e) { close(); }
@@ -161,6 +195,12 @@ public class NetServer {
         void sendBlock(int x, int y, int z, byte b) {
             try { synchronized (out) {
                 out.writeByte(T_BLOCK); out.writeInt(x); out.writeInt(y); out.writeInt(z); out.writeByte(b); out.flush();
+            }} catch (IOException e) { close(); }
+        }
+        void sendSpawn(double x, double y, double z) {
+            try { synchronized (out) {
+                out.writeByte(T_SPAWN);
+                out.writeDouble(x); out.writeDouble(y); out.writeDouble(z); out.flush();
             }} catch (IOException e) { close(); }
         }
         void sendLeave(int pid) {

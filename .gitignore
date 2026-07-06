@@ -16,3 +16,7 @@ assets/*.kra
 mesa-win.zip
 launcher/*.jar
 *~
+out-server/
+server.properties
+server.log
+PACMine-Server.jar

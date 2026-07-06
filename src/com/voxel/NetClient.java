@@ -61,6 +61,30 @@ public class NetClient {
                         queue.add(e);
                         break;
                     }
+                    case NetServer.T_WORLD_INF: {
+                        NetEvent e = new NetEvent();
+                        e.type = NetEvent.WORLD;
+                        e.infiniteWorld = true;
+                        e.seed = in.readLong();
+                        e.protection = in.readBoolean();
+                        int n = in.readInt();
+                        e.chunkMap = new java.util.HashMap<>();
+                        for (int i = 0; i < n; i++) {
+                            long k = in.readLong();
+                            byte[] ch = new byte[in.readInt()];
+                            in.readFully(ch);
+                            e.chunkMap.put(k, ch);
+                        }
+                        queue.add(e);
+                        break;
+                    }
+                    case NetServer.T_SPAWN: {
+                        NetEvent e = new NetEvent();
+                        e.type = NetEvent.SPAWN;
+                        e.px = in.readDouble(); e.py = in.readDouble(); e.pz = in.readDouble();
+                        queue.add(e);
+                        break;
+                    }
                     case NetServer.T_LEAVE: {
                         NetEvent e = new NetEvent();
                         e.type = NetEvent.LEAVE; e.id = in.readInt();
@@ -76,7 +100,12 @@ public class NetClient {
                 }
             }
         } catch (IOException e) {
-            // disconnected
+            // connection dropped: tell the game thread so it can leave the session
+            if (running) {
+                NetEvent ev = new NetEvent();
+                ev.type = NetEvent.DISCONNECT;
+                queue.add(ev);
+            }
         }
     }
 

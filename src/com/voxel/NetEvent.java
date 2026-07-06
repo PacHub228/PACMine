@@ -5,7 +5,7 @@ package com.voxel;
  * thread-safe queue. Only the fields relevant to {@link #type} are set.
  */
 public class NetEvent {
-    public static final int WORLD = 1, BLOCK = 2, MOVE = 3, LEAVE = 4, NAME = 5;
+    public static final int WORLD = 1, BLOCK = 2, MOVE = 3, LEAVE = 4, NAME = 5, DISCONNECT = 6, SPAWN = 7;
 
     public int type;
     public int id;                 // player id (MOVE/LEAVE/NAME)
@@ -16,6 +16,10 @@ public class NetEvent {
     public int chunks;             // world size (WORLD)
     public boolean protection;     // world flag (WORLD)
     public byte[] blocks;          // world data (WORLD)
+    public boolean infiniteWorld;  // infinite world join (WORLD)
+    public long seed;              // world seed (infinite WORLD)
+    public java.util.Map<Long, byte[]> chunkMap;  // edited chunks (infinite WORLD)
     public String name;            // player name (NAME)
     public boolean premium;        // premium flag (NAME)
+    public boolean licensed;       // token verified against the backend (NAME)
 }

@@ -137,6 +137,9 @@ public class Main {
     // achievement toast (top of the screen for a few seconds)
     private String toastTitle = null;
     private double toastTimer = 0;
+    // menu notice ("CONNECTION LOST"), fades after a few seconds
+    private String menuNotice = null;
+    private double menuNoticeTime = 0;
     private boolean wasNight = false;
 
     /** Unlock an achievement; pops the toast on first unlock. */
@@ -406,15 +409,22 @@ public class Main {
         while ((e = netQueue.poll()) != null) {
             switch (e.type) {
                 case NetEvent.WORLD:
-                    world = new World(e.chunks, e.blocks);
+                    if (e.infiniteWorld) {
+                        world = World.createInfinite(e.seed, e.protection);
+                        for (java.util.Map.Entry<Long, byte[]> en : e.chunkMap.entrySet())
+                            world.importChunk(World.chunkCX(en.getKey()), World.chunkCZ(en.getKey()), en.getValue());
+                        spawnX = 0; spawnZ = 0;
+                    } else {
+                        world = new World(e.chunks, e.blocks);
+                        spawnX = world.sx / 2; spawnZ = world.sz / 2;
+                    }
                     renderer = new ChunkRenderer(world, atlas);
                     protection = e.protection;
-                    spawnX = world.sx / 2; spawnZ = world.sz / 2;
                     int sy = World.SY - 1;
                     while (sy > 0 && !world.isSolid(spawnX, sy, spawnZ)) sy--;
                     spawnY = sy + 1;
                     player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
-                    player.borderWalls = protection;
+                    player.borderWalls = protection && !world.infinite;
                     myId = client != null ? client.myId : 0;
                     drops.clear();
                     connecting = false;
@@ -431,6 +441,21 @@ public class Main {
                     break;
                 case NetEvent.LEAVE:
                     remotePlayers.remove(e.id); remoteNames.remove(e.id); remotePrem.remove(e.id);
+                    break;
+                case NetEvent.SPAWN:
+                    if (player != null) {           // server put us back where we logged out
+                        player.x = e.px; player.y = e.py; player.z = e.pz;
+                        player.vy = 0;
+                    }
+                    break;
+                case NetEvent.DISCONNECT:
+                    if (multiplayer && !isHost) {          // server gone: back to the menu
+                        leaveMultiplayer();
+                        inMenu = true; paused = false; inventoryOpen = false;
+                        screen = Screen.MAIN;
+                        menuNotice = "CONNECTION LOST"; menuNoticeTime = 6;
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    }
                     break;
             }
         }
@@ -1296,6 +1321,12 @@ public class Main {
             String foot = "BY PACHUB / PACPERLAR";
             glColor4f(1, 1, 1, 0.35f);
             Font5x7.draw(foot, 12, height - 26, 2);
+        }
+        if (menuNotice != null && menuNoticeTime > 0) {
+            menuNoticeTime -= 1.0 / 60;
+            float a = (float) Math.min(1, menuNoticeTime);
+            glColor4f(1f, 0.45f, 0.4f, a);
+            Font5x7.draw(menuNotice, width/2f - Font5x7.width(menuNotice, 3)/2, ty + 8.5f * ts, 3);
         }
 
         switch (screen) {

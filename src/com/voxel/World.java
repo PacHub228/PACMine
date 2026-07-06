@@ -67,6 +67,12 @@ public class World {
     public void importChunk(int cx, int cz, byte[] data) { chunkMap.put(key(cx, cz), data); }
     public static int chunkCX(long k) { return (int) (k >> 32); }
     public static int chunkCZ(long k) { return (int) (long) k; }
+    /** Chunk-map key for the chunk containing block (x,z). */
+    public static long chunkKeyFor(int x, int z) {
+        return key(Math.floorDiv(x, CHUNK), Math.floorDiv(z, CHUNK));
+    }
+    /** Force-generate the chunk containing block (x,z) (infinite worlds). */
+    public void ensureChunk(int x, int z) { if (infinite) get(x, 0, z); }
 
     // ---- access ----
     public boolean inBounds(int x, int y, int z) {

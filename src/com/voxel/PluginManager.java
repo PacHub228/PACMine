@@ -197,7 +197,7 @@ public class PluginManager {
                   pacmine.surface_y(x, z)               -- ground level at column
 
                 Block ids: 0 air, 1 grass, 2 dirt, 3 stone, 4 wood, 5 leaves, 6 sand,
-                           7 bedrock, 8 coal, 9 iron.
+                           7 bedrock, 8 coal, 9 iron, 10 water, 11 lava.
 
                 Example (welcome.lua):
                   pacmine.on("join", function(name, premium)

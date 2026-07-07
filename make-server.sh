@@ -18,7 +18,8 @@ javac -cp "$LUAJ" -d "$OUT" \
   "$D"/src/com/voxel/SaveGame.java \
   "$D"/src/com/voxel/PMCrypt.java \
   "$D"/src/com/voxel/AuthClient.java \
-  "$D"/src/com/voxel/PluginManager.java
+  "$D"/src/com/voxel/PluginManager.java \
+  "$D"/src/com/voxel/LiquidSim.java
 (cd "$OUT" && jar xf "$LUAJ" org lua)          # merge LuaJ classes into the fat jar
 jar cfe "$D/PACMine-Server.jar" com.voxel.ServerMain -C "$OUT" .
 echo "Server core -> $D/PACMine-Server.jar"

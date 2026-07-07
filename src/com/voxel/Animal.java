@@ -37,11 +37,19 @@ public class Animal {
                 moveTimer = 2 + Math.random() * 3;
             }
             double vx = Math.sin(ang) * speed(), vz = Math.cos(ang) * speed();
+            boolean inLiquid = World.isLiquid(world.get((int) Math.floor(x), (int) Math.floor(y + 0.2), (int) Math.floor(z)));
+            if (inLiquid) { vx *= 0.45; vz *= 0.45; }
             yaw = (float) Math.toDegrees(Math.atan2(vx, vz));
             moveH(vx * dt, 0);
             moveH(0, vz * dt);
         }
-        applyGravity(dt);
+        if (World.isLiquid(world.get((int) Math.floor(x), (int) Math.floor(y + 0.2), (int) Math.floor(z)))) {
+            vy += 6 * dt;                       // paddle up toward the surface
+            if (vy > 1.4) vy = 1.4;
+            y += vy * dt;
+        } else {
+            applyGravity(dt);
+        }
 
         if (!world.infinite) {
             if (x < 1) x = 1; if (x > world.sx - 1) x = world.sx - 1;

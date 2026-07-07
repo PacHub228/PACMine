@@ -63,9 +63,8 @@ public class ServerMain {
             pregenerate(pregen);
             meta = new SaveGame();
             meta.infinite = true; meta.seed = seed; meta.protection = protection; meta.hostileMobs = false;
-            int sy = World.SY - 1;
-            while (sy > 0 && !world.isSolid(0, sy, 0)) sy--;
-            meta.px = 0.5; meta.py = sy + 1; meta.pz = 0.5;
+            int[] dry = world.findDrySpawn(0, 0, 64);
+            meta.px = dry[0] + 0.5; meta.py = dry[1]; meta.pz = dry[2] + 0.5;
             meta.health = Player.MAX_HEARTS;
             saveWorld();
             log("INFINITE server ready: " + pregen + "x" + pregen + " chunks pregenerated, "
@@ -74,9 +73,8 @@ public class ServerMain {
             world = new World(System.nanoTime(), chunks, protection);
             meta = new SaveGame();
             meta.chunks = chunks; meta.protection = protection; meta.hostileMobs = false;
-            int sx = world.sx / 2, sz = world.sz / 2, sy = World.SY - 1;
-            while (sy > 0 && !world.isSolid(sx, sy, sz)) sy--;
-            meta.px = sx + 0.5; meta.py = sy + 1; meta.pz = sz + 0.5;
+            int[] dry = world.findDrySpawn(world.sx / 2, world.sz / 2, 64);
+            meta.px = dry[0] + 0.5; meta.py = dry[1]; meta.pz = dry[2] + 0.5;
             meta.health = Player.MAX_HEARTS;
             saveWorld();
             log("Generated world '" + worldName + "' (" + chunks + "x" + chunks + " chunks)");
@@ -85,6 +83,12 @@ public class ServerMain {
         Queue<NetEvent> queue = new ConcurrentLinkedQueue<>();
         server = new NetServer(world, protection, queue);
         server.setDedicated();
+        LiquidSim sim = new LiquidSim(world, (x, y, z, b) -> server.syncBlock(x, y, z, b));
+        server.setLiquidSim(sim);
+        Thread simThread = new Thread(() -> {
+            while (running) { sleep(100); sim.tick(0.1); }
+        }, "liquid-sim");
+        simThread.setDaemon(true); simThread.start();
         loadPlayers();
         server.start(port);
         log("Listening on port " + port + ". Type 'help' for commands.");

@@ -116,10 +116,20 @@ public class Zombie {
             yaw = (float) Math.toDegrees(Math.atan2(dx, dz));
         }
 
+        // liquids: swim slowly instead of marching along the bottom
+        boolean inLiquid = World.isLiquid(world.get((int) Math.floor(x), (int) Math.floor(y + 0.2), (int) Math.floor(z)));
+        if (inLiquid) { vx *= 0.45; vz *= 0.45; }
+
         // move axis-by-axis, stepping up or mining through obstacles
         moveH(vx * dt, 0, dt, breaker);
         moveH(0, vz * dt, dt, breaker);
-        applyGravity(dt);
+        if (inLiquid) {
+            vy += 6 * dt;                       // buoyancy: bob up toward the surface
+            if (vy > 1.6) vy = 1.6;
+            y += vy * dt;
+        } else {
+            applyGravity(dt);
+        }
         digToward(p, dt, breaker);
         if (siege) siege(p, dt, breaker);
 

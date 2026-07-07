@@ -13,7 +13,8 @@ public class World {
     public static final int CHUNK = 14;   // chunk footprint in blocks
     public static final int SY = 64;      // world height (fixed)
 
-    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9;
+    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9, WATER = 10, LAVA = 11;
+    public static final int SEA = 19;     // water fills terrain up to this height
 
     public final boolean infinite;
     public final int cx, cz;   // size in chunks (finite only)
@@ -102,7 +103,12 @@ public class World {
         blocks[(y * sz + z) * sx + x] = b;
     }
 
-    public boolean isSolid(int x, int y, int z) { return get(x, y, z) != AIR; }
+    public boolean isSolid(int x, int y, int z) {
+        byte b = get(x, y, z);
+        return b != AIR && b != WATER && b != LAVA;   // liquids are passable
+    }
+
+    public static boolean isLiquid(byte b) { return b == WATER || b == LAVA; }
 
     private static int localIdx(int lx, int y, int lz) { return (y * CHUNK + lz) * CHUNK + lx; }
     private static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
@@ -159,6 +165,11 @@ public class World {
             else b = STONE;
             put(x, y, z, b, bx0, bz0, c);
         }
+        // sea: flood everything below SEA level
+        for (int y = h + 1; y <= SEA; y++) put(x, y, z, WATER, bx0, bz0, c);
+        // underground lava pockets just above the bedrock
+        if (n.noise(x * 0.08 + 99, z * 0.08 - 7) > 0.78)
+            for (int y = 2; y <= 4 && y < h - 4; y++) put(x, y, z, LAVA, bx0, bz0, c);
         if (getCol(x, h, z, bx0, bz0, c) == GRASS && n.noise(x * 1.7 + 13, z * 1.7 + 7) > 0.8)
             plantTree(x, h + 1, z, bx0, bz0, c);
     }
@@ -210,6 +221,32 @@ public class World {
         }
     }
 
+    /**
+     * Find a dry spawn column near (cx,cz): spiral outward until the surface
+     * is solid ground, not water/lava. Returns {x, standY, z}; falls back to
+     * the start column if everything within the radius is wet.
+     */
+    public int[] findDrySpawn(int cx, int cz, int radius) {
+        for (int r = 0; r <= radius; r++)
+            for (int dx = -r; dx <= r; dx++)
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;   // ring only
+                    int x = cx + dx, z = cz + dz;
+                    if (!infinite && (x < 1 || x >= sx - 1 || z < 1 || z >= sz - 1)) continue;
+                    int y = SY - 1;
+                    byte b = AIR;
+                    while (y > 0) {
+                        b = get(x, y, z);
+                        if (b != AIR && b != LEAVES && b != WOOD) break;
+                        y--;
+                    }
+                    if (b != WATER && b != LAVA && b != AIR) return new int[]{x, y + 1, z};
+                }
+        int y = SY - 1;
+        while (y > 0 && !isSolid(cx, y, cz)) y--;
+        return new int[]{cx, y + 1, cz};
+    }
+
     public static float[] color(byte b) {
         switch (b) {
             case GRASS:  return new float[]{0.35f, 0.66f, 0.27f};
@@ -221,6 +258,8 @@ public class World {
             case BEDROCK: return new float[]{0.18f, 0.18f, 0.19f};
             case COAL:   return new float[]{0.30f, 0.30f, 0.32f};
             case IRON:   return new float[]{0.65f, 0.55f, 0.45f};
+            case WATER:  return new float[]{0.25f, 0.45f, 0.85f};
+            case LAVA:   return new float[]{0.95f, 0.45f, 0.10f};
             default:     return new float[]{1f, 0f, 1f};
         }
     }

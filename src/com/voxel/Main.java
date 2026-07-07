@@ -20,6 +20,14 @@ public class Main {
 
     private World world;
     private ChunkRenderer renderer;
+    private LiquidSim liquidSim;   // null on multiplayer clients (server-authoritative)
+
+    private void initLiquidSim() {
+        liquidSim = new LiquidSim(world, (x, y, z, b) -> {
+            renderer.markDirty(x, z);
+            netBlock(x, y, z, b);
+        });
+    }
     private TextureAtlas atlas;
     private Player player;
 
@@ -290,14 +298,10 @@ public class Main {
         world = inf ? World.createInfinite(System.nanoTime(), protection)
                     : new World(System.nanoTime(), chunks, protection);
         renderer = new ChunkRenderer(world, atlas);
-        spawnX = inf ? 0 : world.sx / 2; spawnZ = inf ? 0 : world.sz / 2;
-        int sy = World.SY - 1;
-        while (sy > 0) {
-            byte b = world.get(spawnX, sy, spawnZ);
-            if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
-            sy--;
-        }
-        spawnY = sy + 1;
+        initLiquidSim();
+        // fresh world: never spawn in water — walk outward until dry land
+        int[] dry = world.findDrySpawn(inf ? 0 : world.sx / 2, inf ? 0 : world.sz / 2, 64);
+        spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode;
         player.borderWalls = protection && !inf;   // no borders in an endless world
@@ -325,6 +329,7 @@ public class Main {
                 world = new World(s.chunks, s.blocks);
             }
             renderer = new ChunkRenderer(world, atlas);
+            initLiquidSim();
             player = new Player(world, s.px, s.py, s.pz);
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
@@ -397,14 +402,9 @@ public class Main {
         int hostChunks = Math.max(6, newChunks);   // multiplayer needs a real finite world (no infinite)
         world = new World(System.nanoTime(), hostChunks, protection);
         renderer = new ChunkRenderer(world, atlas);
-        spawnX = world.sx / 2; spawnZ = world.sz / 2;
-        int sy = World.SY - 1;
-        while (sy > 0) {
-            byte b = world.get(spawnX, sy, spawnZ);
-            if (b != World.AIR && b != World.LEAVES && b != World.WOOD) break;
-            sy--;
-        }
-        spawnY = sy + 1;
+        initLiquidSim();
+        int[] dry = world.findDrySpawn(world.sx / 2, world.sz / 2, 64);
+        spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
         hasSword = false;
@@ -414,6 +414,7 @@ public class Main {
         multiplayer = true; isHost = true; myId = 0; worldName = null;
         try {
             server = new NetServer(world, protection, netQueue);
+            server.setLiquidSim(liquidSim);
             server.setHostInfo(profileName, profilePremium);
             server.start();
             enterGame();
@@ -451,6 +452,7 @@ public class Main {
                         spawnX = world.sx / 2; spawnZ = world.sz / 2;
                     }
                     renderer = new ChunkRenderer(world, atlas);
+                    liquidSim = null;   // clients don't simulate: the server owns the flow
                     protection = e.protection;
                     int sy = World.SY - 1;
                     while (sy > 0 && !world.isSolid(spawnX, sy, spawnZ)) sy--;
@@ -559,6 +561,7 @@ public class Main {
         if (b == World.AIR) return;
         world.set(x, y, z, World.AIR);
         renderer.markDirty(x, z);
+        if (liquidSim != null) liquidSim.disturb(x, y, z);
         drops.add(new ItemDrop(world, b, x + 0.5, y + 0.3, z + 0.5));
     }
 
@@ -835,6 +838,7 @@ public class Main {
         world.set(px, py, pz, b);
         renderer.markDirty(px, pz);
         netBlock(px, py, pz, b);
+        if (liquidSim != null) liquidSim.disturb(px, py, pz);
         award("BUILDER");
     }
 
@@ -853,6 +857,7 @@ public class Main {
         world.set(bx, by, bz, World.AIR);
         renderer.markDirty(bx, bz);
         netBlock(bx, by, bz, World.AIR);
+        if (liquidSim != null) liquidSim.disturb(bx, by, bz);   // let nearby liquid pour in
         drops.add(new ItemDrop(world, broken, bx + 0.5, by + 0.3, bz + 0.5));  // pop out as an item
         award("FIRST_BLOCK");
         if (broken == World.IRON) award("MINER");
@@ -898,6 +903,7 @@ public class Main {
                 broadcastMove(dt);
                 updateMining(dt);
                 updateDrops(dt);
+                if (liquidSim != null) liquidSim.tick(dt);
                 // forge the sword once 3 wood have been gathered
                 if (!hasSword && countOf(World.WOOD) >= WOOD_FOR_SWORD) {
                     consume(World.WOOD, WOOD_FOR_SWORD);
@@ -911,6 +917,14 @@ public class Main {
                 boolean night = isNight();
                 if (wasNight && !night && !player.isDead() && !multiplayer) award("NIGHT");
                 wasNight = night;
+
+                // lava burns: 2 hearts per second
+                if (player.inLava && !player.creative) player.health -= 2 * dt;
+                // mobs that wander into lava burn up
+                if (!multiplayer) {
+                    zombies.removeIf(z -> world.get((int) Math.floor(z.x), (int) Math.floor(z.y + 0.2), (int) Math.floor(z.z)) == World.LAVA);
+                    animals.removeIf(an -> world.get((int) Math.floor(an.x), (int) Math.floor(an.y + 0.2), (int) Math.floor(an.z)) == World.LAVA);
+                }
 
                 // death, or falling into the void when protection is off
                 if (player.isDead() || (!player.creative && player.y < -5)) {
@@ -1770,7 +1784,7 @@ public class Main {
     }
 
     private static final String[] BLOCK_NAMES = {
-        "AIR", "GRASS", "DIRT", "STONE", "WOOD", "LEAVES", "SAND", "BEDROCK", "COAL", "IRON"
+        "AIR", "GRASS", "DIRT", "STONE", "WOOD", "LEAVES", "SAND", "BEDROCK", "COAL", "IRON", "WATER", "LAVA"
     };
 
     // Minecraft-style inventory layout: 3x8 grid on top, hotbar row below

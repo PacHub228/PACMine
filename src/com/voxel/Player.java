@@ -17,6 +17,7 @@ public class Player {
     public boolean creative = false;   // fly + invulnerable
     public boolean borderWalls = true; // invisible walls at world edges
     public boolean sprinting = false;  // hold Left Shift (survival)
+    public boolean inWater = false, inLava = false;   // liquid state (updated per tick)
 
     private static final double W = 0.3;   // half-width
     private static final double H = 1.8;    // total height
@@ -39,7 +40,11 @@ public class Player {
         if (pitch < -89) pitch = -89;
     }
 
-    public void jump() { if (onGround) { vy = JUMP; onGround = false; } }
+    public void jump() {
+        if (inLava) { vy = 2.5; return; }     // struggle upward through lava
+        if (inWater) { vy = 4.0; return; }    // swim up while space is held
+        if (onGround) { vy = JUMP; onGround = false; }
+    }
 
     public boolean isDead() { return health <= 0; }
 
@@ -56,6 +61,11 @@ public class Player {
 
     /** forward/strafe in [-1,1], vertical in [-1,1] (creative only), dt seconds. */
     public void update(double forward, double strafe, double vertical, double dt) {
+        byte feet = world.get((int) Math.floor(x), (int) Math.floor(y + 0.2), (int) Math.floor(z));
+        byte head = world.get((int) Math.floor(x), (int) Math.floor(y + 1.2), (int) Math.floor(z));
+        inWater = feet == World.WATER || head == World.WATER;
+        inLava  = feet == World.LAVA  || head == World.LAVA;
+
         double yr = Math.toRadians(yaw);
         double fx = -Math.sin(yr), fz = -Math.cos(yr);
         double rx = Math.cos(yr), rz = -Math.sin(yr);
@@ -65,12 +75,19 @@ public class Player {
         if (len > 1e-6) { mx /= len; mz /= len; }
 
         double speed = SPEED * (sprinting ? 1.6 : 1);
+        if (!creative && (inWater || inLava)) speed *= inLava ? 0.4 : 0.65;   // liquids slow you down
         double dx = mx * speed * dt;
         double dz = mz * speed * dt;
         double dy;
         if (creative) {
             vy = 0;
             dy = vertical * SPEED * dt; // free flight
+        } else if (inWater || inLava) {
+            vy -= GRAVITY * 0.2 * dt;                       // buoyancy: gentle sinking
+            double sink = inLava ? -1.2 : -2.2;
+            if (vy < sink) vy = sink;
+            dy = vy * dt;
+            fallAccum = 0;                                  // liquids break your fall
         } else {
             vy -= GRAVITY * dt;
             dy = vy * dt;

@@ -34,6 +34,9 @@ public class NetServer {
     private volatile boolean hasHost = true;       // dedicated server has no local host player
     private volatile String hostName = "Host";
     private volatile boolean hostPremium = false;
+    private volatile LiquidSim liquidSim;   // optional: wakes liquid around remote edits
+
+    public void setLiquidSim(LiquidSim sim) { liquidSim = sim; }
 
     public NetServer(World world, boolean protection, Queue<NetEvent> hostQueue) {
         this.world = world; this.protection = protection; this.hostQueue = hostQueue;
@@ -90,6 +93,7 @@ public class NetServer {
                     byte b = c.in.readByte();
                     world.set(x, y, z, b);
                     if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
+                    if (liquidSim != null) liquidSim.disturb(x, y, z);
                     enqueueBlock(x, y, z, b);
                     for (Conn o : clients) if (o != c) o.sendBlock(x, y, z, b);
                 } else if (type == T_CHAT) {
@@ -171,6 +175,13 @@ public class NetServer {
     /** Apply a block change server-side and broadcast it to every client. */
     public void applyBlock(int x, int y, int z, byte b) {
         world.set(x, y, z, b);
+        if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
+        if (liquidSim != null) liquidSim.disturb(x, y, z);
+        for (Conn c : clients) c.sendBlock(x, y, z, b);
+    }
+
+    /** Broadcast a block the liquid sim already wrote into the world. */
+    public void syncBlock(int x, int y, int z, byte b) {
         if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
         for (Conn c : clients) c.sendBlock(x, y, z, b);
     }

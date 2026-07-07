@@ -105,6 +105,16 @@ public class ChunkRenderer {
                 for (int y = 0; y < World.SY; y++) {
                     byte b = world.get(x, y, z);
                     if (b == World.AIR) continue;
+                    if (World.isLiquid(b)) {
+                        // liquids: only surfaces against air (no inner water-water faces)
+                        if (world.get(x, y + 1, z) == World.AIR) face(x, y, z, b, TOP, 0);
+                        if (world.get(x, y - 1, z) == World.AIR) face(x, y, z, b, BOTTOM, 1);
+                        if (world.get(x, y, z + 1) == World.AIR) face(x, y, z, b, NS, 2);
+                        if (world.get(x, y, z - 1) == World.AIR) face(x, y, z, b, NS, 3);
+                        if (world.get(x + 1, y, z) == World.AIR) face(x, y, z, b, EW, 4);
+                        if (world.get(x - 1, y, z) == World.AIR) face(x, y, z, b, EW, 5);
+                        continue;
+                    }
                     if (!world.isSolid(x, y + 1, z)) face(x, y, z, b, TOP, 0);
                     if (!world.isSolid(x, y - 1, z)) face(x, y, z, b, BOTTOM, 1);
                     if (!world.isSolid(x, y, z + 1)) face(x, y, z, b, NS, 2);

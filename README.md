@@ -77,4 +77,4 @@ A small Swing launcher downloads, builds and runs the latest version from GitHub
 - `assets/` — PNG textures (16×16)
 
 ## License
-[MIT](LICENSE)
+[Apache 2.0](LICENSE) — versions up to v0.1.5.5 were released under MIT.

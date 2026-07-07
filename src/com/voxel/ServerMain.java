@@ -121,6 +121,9 @@ public class ServerMain {
                         }
                     } else if (e.type == NetEvent.BLOCK && plugins != null) {
                         plugins.fire("block", e.x, e.y, e.z, e.b);
+                    } else if (e.type == NetEvent.CHAT) {
+                        log("<" + e.name + "> " + e.text);
+                        if (plugins != null) plugins.fire("chat", e.name, e.text);
                     }
                 }
                 sleep(200);
@@ -142,9 +145,14 @@ public class ServerMain {
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
         String line;
         while (running && (line = in.readLine()) != null) {
+            if (line.trim().toLowerCase().startsWith("say ")) {
+                String msg = line.trim().substring(4).trim();
+                if (!msg.isEmpty()) { server.hostChat("[Server]", msg); log("<[Server]> " + msg); }
+                continue;
+            }
             switch (line.trim().toLowerCase()) {
                 case "": break;
-                case "help": log("Commands: list (online players), plugins (loaded plugins), save (save world), stop (save and quit)"); break;
+                case "help": log("Commands: list (online players), say <msg> (chat), plugins (loaded plugins), save (save world), stop (save and quit)"); break;
                 case "plugins": log(plugins == null ? "Plugins disabled (plugins=false)"
                     : "Plugins (" + plugins.loadedPlugins().size() + "): " + String.join(", ", plugins.loadedPlugins())); break;
                 case "list": log("Online (" + players.size() + "): " + String.join(", ", players.values())); break;

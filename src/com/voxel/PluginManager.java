@@ -124,6 +124,43 @@ public class PluginManager {
         t.set("kick", new OneArgFunction() {
             public LuaValue call(LuaValue name) { return valueOf(server.kick(name.tojstring())); }
         });
+        t.set("say", new TwoArgFunction() {
+            public LuaValue call(LuaValue from, LuaValue text) {
+                server.hostChat(from.tojstring(), text.tojstring());
+                logger.log("<" + from.tojstring() + "> " + text.tojstring());
+                return NIL;
+            }
+        });
+        t.set("spawn_npc", new VarArgFunction() {
+            public Varargs invoke(Varargs a) {
+                return valueOf(server.spawnNpc(a.tojstring(1), a.todouble(2), a.todouble(3), a.todouble(4)));
+            }
+        });
+        t.set("move_npc", new VarArgFunction() {
+            public Varargs invoke(Varargs a) {
+                float yaw = a.narg() >= 5 ? (float) a.todouble(5) : 0;
+                return valueOf(server.moveNpc(a.toint(1), a.todouble(2), a.todouble(3), a.todouble(4), yaw));
+            }
+        });
+        t.set("remove_npc", new OneArgFunction() {
+            public LuaValue call(LuaValue id) { return valueOf(server.removeNpc(id.toint())); }
+        });
+        t.set("player_pos", new OneArgFunction() {
+            public LuaValue call(LuaValue name) {
+                double[] p = server.positionOf(name.tojstring());
+                if (p == null) return NIL;
+                LuaTable pos = new LuaTable();
+                pos.set("x", p[0]); pos.set("y", p[1]); pos.set("z", p[2]);
+                return pos;
+            }
+        });
+        t.set("surface_y", new TwoArgFunction() {
+            public LuaValue call(LuaValue x, LuaValue z) {
+                int bx = x.toint(), bz = z.toint(), y = World.SY - 1;
+                while (y > 0 && !world.isSolid(bx, y, bz)) y--;
+                return valueOf(y + 1);
+            }
+        });
         t.set("seed", new ZeroArgFunction() {
             public LuaValue call() { return valueOf(world.seed()); }
         });
@@ -143,12 +180,21 @@ public class PluginManager {
                   pacmine.on("join",  function(name, premium, licensed) ... end)
                   pacmine.on("leave", function(name) ... end)
                   pacmine.on("block", function(x, y, z, id) ... end)   -- block changed by a player
+                  pacmine.on("chat",  function(name, text) ... end)    -- player chat message
                   pacmine.on("tick",  function(seconds) ... end)       -- once per second
+                  pacmine.say(from, text)         -- send a chat line to all players
                   pacmine.get_block(x, y, z)      -- block id
                   pacmine.set_block(x, y, z, id)  -- change block, synced to all players
                   pacmine.players()               -- table of online names
                   pacmine.kick(name)              -- disconnect a player
                   pacmine.seed(), pacmine.is_infinite()
+
+                NPCs (rendered by clients like normal players, with a name tag):
+                  pacmine.spawn_npc(name, x, y, z)      -- returns npc id
+                  pacmine.move_npc(id, x, y, z [, yaw]) -- move it (true/false)
+                  pacmine.remove_npc(id)                -- despawn (true/false)
+                  pacmine.player_pos(name)              -- {x=,y=,z=} or nil
+                  pacmine.surface_y(x, z)               -- ground level at column
 
                 Block ids: 0 air, 1 grass, 2 dirt, 3 stone, 4 wood, 5 leaves, 6 sand,
                            7 bedrock, 8 coal, 9 iron.

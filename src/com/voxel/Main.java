@@ -140,6 +140,31 @@ public class Main {
     // menu notice ("CONNECTION LOST"), fades after a few seconds
     private String menuNotice = null;
     private double menuNoticeTime = 0;
+
+    // chat (T): input line + fading history above the hotbar
+    private boolean chatOpen = false, chatSwallowChar = false;
+    private final StringBuilder chatInput = new StringBuilder();
+    private final java.util.ArrayDeque<Object[]> chatLog = new java.util.ArrayDeque<>(); // {line, time}
+    private double chatClock = 0;
+
+    private void addChat(String line) {
+        chatLog.addLast(new Object[]{line, chatClock});
+        while (chatLog.size() > 8) chatLog.removeFirst();
+    }
+
+    private void sendChat() {
+        String msg = chatInput.toString().trim();
+        chatInput.setLength(0);
+        if (msg.isEmpty()) return;
+        if (multiplayer && !isHost && client != null) {
+            client.sendChat(msg);                            // server echoes it back to us
+        } else if (multiplayer && isHost && server != null) {
+            server.hostChat(profileName, msg);
+            addChat(profileName + ": " + msg);
+        } else {
+            addChat(profileName + ": " + msg);               // singleplayer: talk to yourself
+        }
+    }
     private boolean wasNight = false;
 
     /** Unlock an achievement; pops the toast on first unlock. */
@@ -187,6 +212,13 @@ public class Main {
             selectedSlot = (selectedSlot - (int) Math.signum(dy) + HOT) % HOT;
         });
         glfwSetCharCallback(window, (w, cp) -> {
+            if (chatOpen) {
+                if (chatSwallowChar) { chatSwallowChar = false; return; }   // the opening 'T'
+                boolean latin = cp >= 32 && cp < 127;
+                boolean cyr = (cp >= 0x410 && cp <= 0x44F) || cp == 0x401 || cp == 0x451;  // А-я, Ё, ё
+                if ((latin || cyr) && chatInput.length() < 80) chatInput.append((char) cp);
+                return;
+            }
             if (inMenu && screen == Screen.JOIN && cp < 128) {
                 char ch = (char) cp;
                 if (Character.isLetterOrDigit(ch) || ch == '.' || ch == ':' || ch == '-')
@@ -442,6 +474,9 @@ public class Main {
                 case NetEvent.LEAVE:
                     remotePlayers.remove(e.id); remoteNames.remove(e.id); remotePrem.remove(e.id);
                     break;
+                case NetEvent.CHAT:
+                    addChat(e.name + ": " + e.text);
+                    break;
                 case NetEvent.SPAWN:
                     if (player != null) {           // server put us back where we logged out
                         player.x = e.px; player.y = e.py; player.z = e.pz;
@@ -605,6 +640,8 @@ public class Main {
                 else if (screen == Screen.CREATE || screen == Screen.WORLD_MENU) screen = Screen.WORLDS;
                 else if (screen == Screen.JOIN) screen = Screen.MP;
                 else screen = Screen.MAIN;
+            } else if (chatOpen) {
+                chatOpen = false; chatInput.setLength(0);
             } else if (inventoryOpen) {
                 closeInventory();
             } else {
@@ -621,6 +658,16 @@ public class Main {
             return;
         }
         if (!inMenu && key == GLFW_KEY_F3 && action == GLFW_PRESS) { showDebug = !showDebug; return; }
+        if (chatOpen && action == GLFW_PRESS) {
+            if (key == GLFW_KEY_ENTER) { sendChat(); chatOpen = false; }
+            else if (key == GLFW_KEY_BACKSPACE && chatInput.length() > 0)
+                chatInput.deleteCharAt(chatInput.length() - 1);
+            return;
+        }
+        if (!inMenu && !paused && !inventoryOpen && key == GLFW_KEY_T && action == GLFW_PRESS) {
+            chatOpen = true; chatSwallowChar = true; chatInput.setLength(0);
+            return;
+        }
         if (!inMenu && !paused && key == GLFW_KEY_E && action == GLFW_PRESS) {
             if (inventoryOpen) closeInventory();
             else {
@@ -872,6 +919,7 @@ public class Main {
             }
 
             if (toastTimer > 0) toastTimer -= dt;
+            chatClock += dt;
 
             // fps counter
             fpsAccum += dt; fpsFrames++;
@@ -896,6 +944,11 @@ public class Main {
     }
 
     private void handleMovement(double dt) {
+        if (chatOpen) {                       // typing: stand still (gravity still applies)
+            player.sprinting = false;
+            player.update(0, 0, 0, dt);
+            return;
+        }
         double f = 0, s = 0, v = 0;
         if (key(GLFW_KEY_W)) f += 1; if (key(GLFW_KEY_S)) f -= 1;
         if (key(GLFW_KEY_D)) s += 1; if (key(GLFW_KEY_A)) s -= 1;
@@ -1004,6 +1057,7 @@ public class Main {
         drawNameTags();
         if (showDebug) drawDebug();
         drawToast();
+        drawChat();
 
         // first-person held sword in the bottom-right, tilted like it's in hand
         if (hasSword && swordTex != 0) {
@@ -1579,6 +1633,37 @@ public class Main {
                 glEnd();
                 glDisable(GL_TEXTURE_2D);
             }
+        }
+    }
+
+    /** Chat: fading history bottom-left + the input line when typing (T). */
+    private void drawChat() {
+        float ls = 2.2f, lh = 9 * ls;
+        float x = 12, yBase = height - 130;
+        // history, newest at the bottom; lines fade out after 10s unless typing
+        int i = chatLog.size();
+        for (Object[] entry : chatLog) {
+            i--;
+            double age = chatClock - (Double) entry[1];
+            float alpha = chatOpen ? 1f : (float) Math.max(0, Math.min(1, (12 - age) / 2));
+            if (alpha <= 0) continue;
+            float y = yBase - i * lh - lh;
+            String line = (String) entry[0];
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(0, 0, 0, 0.45f * alpha);
+            quad(x - 4, y - 3, x + Font5x7.width(line, ls) + 6, y + 7 * ls + 3);
+            glColor4f(1, 1, 1, alpha);
+            Font5x7.draw(line, x, y, ls);
+        }
+        // input line
+        if (chatOpen) {
+            String line = "> " + chatInput + ((chatClock % 1.0 < 0.5) ? "_" : "");
+            float y = yBase + 8;
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(0, 0, 0, 0.65f);
+            quad(x - 4, y - 4, x + Math.max(260, Font5x7.width(line, ls) + 10), y + 7 * ls + 4);
+            glColor4f(0.85f, 0.95f, 0.6f, 1f);
+            Font5x7.draw(line, x, y, ls);
         }
     }
 

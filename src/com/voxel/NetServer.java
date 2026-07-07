@@ -13,7 +13,7 @@ import java.util.Queue;
  * actions back to the host via a shared event queue.
  */
 public class NetServer {
-    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4, T_NAME = 5, T_WORLD_INF = 6, T_SPAWN = 7;
+    static final byte T_ASSIGN = 0, T_WORLD = 1, T_MOVE = 2, T_BLOCK = 3, T_LEAVE = 4, T_NAME = 5, T_WORLD_INF = 6, T_SPAWN = 7, T_CHAT = 8;
     public static final int PORT = 25565;
 
     private final World world;
@@ -92,6 +92,14 @@ public class NetServer {
                     if (world.infinite) editedChunks.add(World.chunkKeyFor(x, z));
                     enqueueBlock(x, y, z, b);
                     for (Conn o : clients) if (o != c) o.sendBlock(x, y, z, b);
+                } else if (type == T_CHAT) {
+                    String msg = c.in.readUTF();
+                    if (msg.length() > 100) msg = msg.substring(0, 100);
+                    if (!msg.isBlank()) {
+                        String from = c.name == null ? "Player" : c.name;
+                        for (Conn o : clients) o.sendChat(from, msg);   // echo to everyone incl. sender
+                        enqueueChat(from, msg);
+                    }
                 } else if (type == T_NAME) {
                     c.in.readInt();                          // id placeholder the client sends
                     String provided = c.in.readUTF();
@@ -108,6 +116,12 @@ public class NetServer {
                     // tell the newcomer about everyone already here (host + other clients)
                     if (hasHost) c.sendName(0, hostName, hostPremium);
                     for (Conn o : clients) if (o != c && o.name != null) c.sendName(o.id, o.name, o.premium);
+                    // ...and about the NPCs
+                    for (java.util.Map.Entry<Integer, Object[]> en : npcs.entrySet()) {
+                        double[] np = (double[]) en.getValue()[1];
+                        c.sendName(en.getKey(), (String) en.getValue()[0], false);
+                        c.sendMove(en.getKey(), np[0], np[1], np[2], (float) np[3], 0);
+                    }
                 }
             }
         } catch (IOException e) {
@@ -118,6 +132,39 @@ public class NetServer {
             enqueueLeave(c.id);
             for (Conn o : clients) o.sendLeave(c.id);
         }
+    }
+
+    // ---- NPCs: server-side "players" that clients render like anyone else ----
+    private final java.util.Map<Integer, Object[]> npcs = new java.util.concurrent.ConcurrentHashMap<>(); // id -> {name, double[x,y,z,yaw]}
+
+    /** Spawn an NPC visible to all clients; returns its id. */
+    public int spawnNpc(String name, double x, double y, double z) {
+        int id = nextId.getAndIncrement();
+        npcs.put(id, new Object[]{name, new double[]{x, y, z, 0}});
+        for (Conn c : clients) { c.sendName(id, name, false); c.sendMove(id, x, y, z, 0, 0); }
+        return id;
+    }
+
+    /** Move an NPC (broadcast to all clients). */
+    public boolean moveNpc(int id, double x, double y, double z, float yaw) {
+        Object[] n = npcs.get(id);
+        if (n == null) return false;
+        double[] p = (double[]) n[1];
+        p[0] = x; p[1] = y; p[2] = z; p[3] = yaw;
+        for (Conn c : clients) c.sendMove(id, x, y, z, yaw, 0);
+        return true;
+    }
+
+    /** Remove an NPC. */
+    public boolean removeNpc(int id) {
+        if (npcs.remove(id) == null) return false;
+        for (Conn c : clients) c.sendLeave(id);
+        return true;
+    }
+
+    /** Last known position of a player by name, or null. */
+    public double[] positionOf(String name) {
+        return name == null ? null : playerPos.get(name.toLowerCase());
     }
 
     // ---- called from server-side code (console, plugins) ----
@@ -149,6 +196,11 @@ public class NetServer {
     public void hostBlock(int x, int y, int z, byte b) {
         for (Conn o : clients) o.sendBlock(x, y, z, b);
     }
+    /** Chat line from the host / server / plugins, sent to every client. */
+    public void hostChat(String from, String text) {
+        for (Conn o : clients) o.sendChat(from, text);
+    }
+
     public void hostName(String name, boolean premium) {
         hostName = name; hostPremium = premium;
         for (Conn o : clients) o.sendName(0, name, premium);
@@ -163,6 +215,9 @@ public class NetServer {
     }
     private void enqueueLeave(int id) {
         NetEvent e = new NetEvent(); e.type = NetEvent.LEAVE; e.id = id; hostQueue.add(e);
+    }
+    private void enqueueChat(String from, String text) {
+        NetEvent e = new NetEvent(); e.type = NetEvent.CHAT; e.name = from; e.text = text; hostQueue.add(e);
     }
     private void enqueueName(int id, String name, boolean premium, boolean licensed) {
         NetEvent e = new NetEvent(); e.type = NetEvent.NAME; e.id = id; e.name = name;
@@ -217,6 +272,11 @@ public class NetServer {
         void sendBlock(int x, int y, int z, byte b) {
             try { synchronized (out) {
                 out.writeByte(T_BLOCK); out.writeInt(x); out.writeInt(y); out.writeInt(z); out.writeByte(b); out.flush();
+            }} catch (IOException e) { close(); }
+        }
+        void sendChat(String from, String text) {
+            try { synchronized (out) {
+                out.writeByte(T_CHAT); out.writeUTF(from == null ? "" : from); out.writeUTF(text); out.flush();
             }} catch (IOException e) { close(); }
         }
         void sendSpawn(double x, double y, double z) {

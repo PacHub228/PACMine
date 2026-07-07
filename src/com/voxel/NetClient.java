@@ -78,6 +78,12 @@ public class NetClient {
                         queue.add(e);
                         break;
                     }
+                    case NetServer.T_CHAT: {
+                        NetEvent e = new NetEvent();
+                        e.type = NetEvent.CHAT; e.name = in.readUTF(); e.text = in.readUTF();
+                        queue.add(e);
+                        break;
+                    }
                     case NetServer.T_SPAWN: {
                         NetEvent e = new NetEvent();
                         e.type = NetEvent.SPAWN;
@@ -121,6 +127,12 @@ public class NetClient {
         try { synchronized (out) {
             out.writeByte(NetServer.T_BLOCK);
             out.writeInt(x); out.writeInt(y); out.writeInt(z); out.writeByte(b); out.flush();
+        }} catch (IOException ignored) {}
+    }
+
+    public void sendChat(String msg) {
+        try { synchronized (out) {
+            out.writeByte(NetServer.T_CHAT); out.writeUTF(msg); out.flush();
         }} catch (IOException ignored) {}
     }
 

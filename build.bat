@@ -7,5 +7,10 @@ if not exist out mkdir out
 echo Compiling...
 dir /s /b src\*.java > sources.txt
 javac -cp "!CP!" -d out @sources.txt
+if errorlevel 1 (
+  del sources.txt
+  echo BUILD FAILED
+  exit /b 1
+)
 del sources.txt
 echo Build OK -^> out\

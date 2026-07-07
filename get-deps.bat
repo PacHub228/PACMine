@@ -10,4 +10,7 @@ for %%m in (lwjgl lwjgl-glfw lwjgl-opengl) do (
   if not exist "lib\%%m-%V%-natives-windows.jar" powershell -Command "Invoke-WebRequest -Uri '%BASE%/%%m/%V%/%%m-%V%-natives-windows.jar' -OutFile 'lib\%%m-%V%-natives-windows.jar'"
   echo ok: %%m
 )
+rem LuaJ: Lua interpreter for server plugins
+if not exist "lib\luaj-jse-3.0.1.jar" powershell -Command "Invoke-WebRequest -Uri 'https://repo1.maven.org/maven2/org/luaj/luaj-jse/3.0.1/luaj-jse-3.0.1.jar' -OutFile 'lib\luaj-jse-3.0.1.jar'"
+echo ok: luaj
 echo All deps in lib\

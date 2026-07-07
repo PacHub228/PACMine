@@ -20,3 +20,4 @@ out-server/
 server.properties
 server.log
 PACMine-Server.jar
+*.pid

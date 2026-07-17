@@ -19,6 +19,8 @@ public class SaveGame {
     private static final int MAGIC_PMS2 = 0x504D5332;  // "PMS2" adds zombie type + hp
     private static final int MAGIC_PMS3 = 0x504D5333;  // "PMS3" adds animals
     private static final int MAGIC_PMS4 = 0x504D5334;  // "PMS4" slot-based inventory
+    private static final int MAGIC_PMS5 = 0x504D5335;  // "PMS5" adds villager NPCs
+    private static final int MAGIC_PMS6 = 0x504D5336;  // "PMS6" adds the pickaxe
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
@@ -29,6 +31,7 @@ public class SaveGame {
     public float yaw, pitch;
     public double health;
     public boolean hasSword;
+    public boolean hasPickaxe;
     public int logsBroken;
     public byte[] blocks;
 
@@ -42,6 +45,8 @@ public class SaveGame {
     public List<double[]> zombies = new ArrayList<>();  // {x, y, z, yaw, combat, type, hp}
     public List<double[]> drops = new ArrayList<>();    // {type, x, y, z}
     public List<double[]> animals = new ArrayList<>();  // {type, x, y, z, yaw}
+    public List<String> npcNames = new ArrayList<>();   // villagers (parallel lists)
+    public List<double[]> npcData = new ArrayList<>();  // {x, y, z, yaw}
 
     // infinite worlds
     public boolean infinite;
@@ -80,7 +85,7 @@ public class SaveGame {
         DIR.mkdirs();
         ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(buf))) {
-            out.writeInt(MAGIC_PMS4);
+            out.writeInt(MAGIC_PMS6);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
@@ -91,6 +96,7 @@ public class SaveGame {
             out.writeFloat(yaw); out.writeFloat(pitch);
             out.writeDouble(health);
             out.writeBoolean(hasSword);
+            out.writeBoolean(hasPickaxe);
             out.writeInt(logsBroken);
             out.writeDouble(timeOfDay);
             out.writeInt(wave); out.writeDouble(waveTimer);
@@ -119,6 +125,13 @@ public class SaveGame {
                 out.writeDouble(a[1]); out.writeDouble(a[2]); out.writeDouble(a[3]);
                 out.writeFloat((float) a[4]);
             }
+            out.writeInt(npcNames.size());
+            for (int i = 0; i < npcNames.size(); i++) {
+                out.writeUTF(npcNames.get(i));
+                double[] d = npcData.get(i);
+                out.writeDouble(d[0]); out.writeDouble(d[1]); out.writeDouble(d[2]);
+                out.writeFloat((float) d[3]);
+            }
             if (infinite) {
                 out.writeLong(seed);
                 out.writeInt(chunkMap.size());
@@ -143,7 +156,7 @@ public class SaveGame {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new ByteArrayInputStream(raw)))) {
             int magic = in.readInt();
-            if (magic >= MAGIC_PMS && magic <= MAGIC_PMS4)
+            if (magic >= MAGIC_PMS && magic <= MAGIC_PMS6)
                 return loadPms(in, magic - MAGIC_PMS + 1);
             if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
             throw new IOException("bad save file");
@@ -151,7 +164,7 @@ public class SaveGame {
     }
 
     private static SaveGame loadPms(DataInputStream in, int ver) throws IOException {
-        boolean v2 = ver >= 2, v3 = ver >= 3, v4 = ver >= 4;
+        boolean v2 = ver >= 2, v3 = ver >= 3, v4 = ver >= 4, v5 = ver >= 5, v6 = ver >= 6;
         SaveGame s = new SaveGame();
         s.infinite = in.readBoolean();
         if (!s.infinite) s.chunks = in.readInt();
@@ -163,6 +176,7 @@ public class SaveGame {
         s.yaw = in.readFloat(); s.pitch = in.readFloat();
         s.health = in.readDouble();
         s.hasSword = in.readBoolean();
+        if (v6) s.hasPickaxe = in.readBoolean();
         s.logsBroken = in.readInt();
         s.timeOfDay = in.readDouble();
         s.wave = in.readInt(); s.waveTimer = in.readDouble();
@@ -194,6 +208,13 @@ public class SaveGame {
             for (int i = 0; i < na; i++)
                 s.animals.add(new double[]{in.readInt(), in.readDouble(), in.readDouble(),
                                            in.readDouble(), in.readFloat()});
+        }
+        if (v5) {
+            int nn = in.readInt();
+            for (int i = 0; i < nn; i++) {
+                s.npcNames.add(in.readUTF());
+                s.npcData.add(new double[]{in.readDouble(), in.readDouble(), in.readDouble(), in.readFloat()});
+            }
         }
         readWorld(in, s);
         return s;

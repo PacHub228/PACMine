@@ -131,6 +131,10 @@ public class Main {
     private static final int WOOD_FOR_SWORD = 3;
     private boolean hasSword = false;
     private int swordTex = 0;
+    // pickaxe: 3 stone forge it; mines stone/coal/iron 3x faster
+    private static final int STONE_FOR_PICK = 3;
+    private boolean hasPickaxe = false;
+    private int pickTex = 0;
 
     // zombies
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
@@ -141,6 +145,19 @@ public class Main {
     private static final int MAX_ANIMALS = 10;
     private double animalTimer = 0;
     private int pigBody, pigFace, cowBody, cowFace, chickBody, chickFace;
+
+    // villager NPCs: wander the map, chat at players, saved with the world
+    private final java.util.List<Npc> npcs = new java.util.ArrayList<>();
+    private int vBody, vFace;
+    private static final String[] NPC_NAMES = {
+        "Вася", "Петя", "Гриша", "Толик", "Борис", "Семён", "Аркадий", "Жора"
+    };
+    private static final String[] NPC_PHRASES = {
+        "Привет, путник!", "Видел зомби за холмом...", "Хорошая погода, да?",
+        "Говорят, под землёй есть лава", "Не копай под собой!", "Я тут живу",
+        "Железо глубоко, уголь везде", "Слышал про премиум? Спроси Пакперлара",
+        "Три дерева - и меч твой", "Ночью лучше сидеть дома"
+    };
 
     // achievement toast (top of the screen for a few seconds)
     private String toastTitle = null;
@@ -257,6 +274,7 @@ public class Main {
 
         atlas = new TextureAtlas("assets");
         swordTex   = TextureAtlas.loadStandalone("assets/sword.png");
+        pickTex    = TextureAtlas.loadStandalone("assets/pickaxe.png");
         zHeadFront = TextureAtlas.loadStandalone("assets/zombie_head_pered.png");
         zHead      = TextureAtlas.loadStandalone("assets/zombie_head.png");
         zBody      = TextureAtlas.loadStandalone("assets/zombie.png");
@@ -272,6 +290,8 @@ public class Main {
         cowFace   = TextureAtlas.loadStandalone("assets/cow_face.png");
         chickBody = TextureAtlas.loadStandalone("assets/chicken.png");
         chickFace = TextureAtlas.loadStandalone("assets/chicken_face.png");
+        vBody     = TextureAtlas.loadStandalone("assets/villager.png");
+        vFace     = TextureAtlas.loadStandalone("assets/villager_face.png");
         loadProfile();
         updateTitle();
     }
@@ -306,7 +326,10 @@ public class Main {
         player.creative = creativeMode;
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
+        hasPickaxe = false;
         zombies.clear(); drops.clear(); animals.clear();
+        npcs.clear();
+        spawnVillagers();
         initSlots();
         timeOfDay = 0.25;
         wave = 0; waveTimer = 0;
@@ -334,6 +357,7 @@ public class Main {
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
             hasSword = s.hasSword;
+            hasPickaxe = s.hasPickaxe;
             timeOfDay = s.timeOfDay; wave = s.wave; waveTimer = s.waveTimer;
             selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < HOT) ? s.selectedSlot : 2;
             if (s.slotType != null) {                       // PMS4 slot inventory
@@ -366,6 +390,13 @@ public class Main {
                 an.yaw = (float) a[4];
                 animals.add(an);
             }
+            npcs.clear();
+            for (int i = 0; i < s.npcNames.size(); i++) {
+                double[] d = s.npcData.get(i);
+                Npc n = new Npc(world, s.npcNames.get(i), d[0], d[1], d[2]);
+                n.yaw = (float) d[3];
+                npcs.add(n);
+            }
             worldName = name;
             enterGame();
         } catch (IOException e) {
@@ -381,12 +412,14 @@ public class Main {
         s.px = player.x; s.py = player.y; s.pz = player.z;
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
         s.hasSword = hasSword;
+        s.hasPickaxe = hasPickaxe;
         s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
         s.selectedSlot = selectedSlot;
         s.slotType = slotType.clone(); s.slotCount = slotCount.clone();
         for (Zombie z : zombies) s.zombies.add(new double[]{z.x, z.y, z.z, z.yaw, z.combat ? 1 : 0, z.type, z.hp});
         for (ItemDrop d : drops) s.drops.add(new double[]{d.type, d.x, d.y, d.z});
         for (Animal a : animals) s.animals.add(new double[]{a.type, a.x, a.y, a.z, a.yaw});
+        for (Npc n : npcs) { s.npcNames.add(n.name); s.npcData.add(new double[]{n.x, n.y, n.z, n.yaw}); }
         if (world.infinite) {
             s.infinite = true; s.seed = world.seed(); s.chunkMap = world.exportChunks();
         } else {
@@ -407,8 +440,8 @@ public class Main {
         spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
-        hasSword = false;
-        zombies.clear(); drops.clear(); animals.clear();  // mobs disabled in multiplayer v1
+        hasSword = false; hasPickaxe = false;
+        zombies.clear(); drops.clear(); animals.clear(); npcs.clear();  // mobs disabled in multiplayer v1
         initSlots();
         remotePlayers.clear(); netQueue.clear();
         multiplayer = true; isHost = true; myId = 0; worldName = null;
@@ -574,6 +607,51 @@ public class Main {
             renderer.markDirty(x, z);
         }
     };
+
+    /** A fresh world gets a few villagers wandering near the spawn. */
+    private void spawnVillagers() {
+        java.util.List<String> pool = new java.util.ArrayList<>(java.util.List.of(NPC_NAMES));
+        java.util.Collections.shuffle(pool);
+        for (int i = 0; i < 3; i++) {
+            double ang = Math.random() * Math.PI * 2, dist = 6 + Math.random() * 10;
+            int nx = spawnX + (int) (Math.cos(ang) * dist);
+            int nz = spawnZ + (int) (Math.sin(ang) * dist);
+            int[] dry = world.findDrySpawn(nx, nz, 12);
+            npcs.add(new Npc(world, pool.get(i), dry[0] + 0.5, dry[1], dry[2] + 0.5));
+        }
+    }
+
+    /** Villagers wander and chat at players who come close. */
+    private void updateNpcs(double dt) {
+        for (Npc n : npcs) {
+            n.update(dt);
+            double dx = n.x - player.x, dz = n.z - player.z;
+            if (n.chatCooldown <= 0 && dx * dx + dz * dz < 12 && Math.abs(n.y - player.y) < 3) {
+                addChat(n.name + ": " + NPC_PHRASES[(int) (Math.random() * NPC_PHRASES.length)]);
+                n.chatCooldown = 25 + Math.random() * 30;
+            }
+        }
+        npcs.removeIf(n -> world.get((int) Math.floor(n.x), (int) Math.floor(n.y + 0.2), (int) Math.floor(n.z)) == World.LAVA);
+    }
+
+    /** Draw villagers with the player model + robe/face textures. */
+    private void renderNpcs() {
+        if (npcs.isEmpty()) return;
+        glDisable(GL_CULL_FACE);
+        glColor3f(1, 1, 1);
+        for (Npc n : npcs) {
+            glPushMatrix();
+            glTranslatef((float) n.x, (float) n.y, (float) n.z);
+            glRotatef(n.yaw + 180, 0, 1, 0);
+            double[] body = {-0.3, 0, -0.2, 0.3, 1.2, 0.2};
+            bindBox(vBody, body, -1);
+            double[] head = {-0.25, 1.18, -0.25, 0.25, 1.7, 0.25};
+            bindBox(pHead, head, 0);       // same yellow head as players
+            bindFront(vFace, head);        // ...but with the villager face
+            glPopMatrix();
+        }
+        glEnable(GL_CULL_FACE);
+    }
 
     /** Animals appear only in daylight, up to a cap; existing ones stay at night. */
     private void manageAnimals(double dt) {
@@ -770,6 +848,12 @@ public class Main {
         player.addYawPitch((float) (-dx * 0.12), (float) (-dy * 0.12));
     }
 
+    /** Seconds to mine a block for THIS player (pickaxe speeds up the stone family). */
+    private double mineNeed(byte b) {
+        boolean pickHelps = b == World.STONE || b == World.COAL || b == World.IRON;
+        return mineTime(b) / (hasPickaxe && pickHelps ? 3.0 : 1.0);
+    }
+
     /** Seconds needed to mine a block. */
     private static double mineTime(byte b) {
         switch (b) {
@@ -870,7 +954,7 @@ public class Main {
         if (r == null || world.get(r[0], r[1], r[2]) == World.BEDROCK) { mineX = Integer.MIN_VALUE; mineProg = 0; return; }
         if (r[0] != mineX || r[1] != mineY || r[2] != mineZ) { mineX = r[0]; mineY = r[1]; mineZ = r[2]; mineProg = 0; }
         mineProg += dt;
-        if (mineProg >= mineTime(world.get(mineX, mineY, mineZ))) {
+        if (mineProg >= mineNeed(world.get(mineX, mineY, mineZ))) {
             breakBlock(mineX, mineY, mineZ);
             mineX = Integer.MIN_VALUE; mineProg = 0;
         }
@@ -899,6 +983,7 @@ public class Main {
                     for (Zombie z : zombies) z.update(player, dt, zombieWorld);
                     manageAnimals(dt);
                     for (Animal a : animals) a.update(dt);
+                    updateNpcs(dt);
                 }
                 broadcastMove(dt);
                 updateMining(dt);
@@ -909,6 +994,12 @@ public class Main {
                     consume(World.WOOD, WOOD_FOR_SWORD);
                     hasSword = true;
                     award("SWORD");
+                }
+                // forge the pickaxe once 3 stone have been gathered
+                if (!hasPickaxe && countOf(World.STONE) >= STONE_FOR_PICK) {
+                    consume(World.STONE, STONE_FOR_PICK);
+                    hasPickaxe = true;
+                    award("PICK");
                 }
                 if (superMode) timeOfDay = 0.25;                       // Super: eternal noon
                 else timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
@@ -946,7 +1037,7 @@ public class Main {
             setupCamera();
             renderer.render(player.x, player.z);
             renderDrops();
-            if (!multiplayer) { renderZombies(); renderAnimals(); }
+            if (!multiplayer) { renderZombies(); renderAnimals(); renderNpcs(); }
             renderRemotePlayers();
             drawHud();
             if (paused) drawPauseMenu();
@@ -1055,7 +1146,7 @@ public class Main {
 
         // mining progress bar
         if (mineX != Integer.MIN_VALUE && mineProg > 0) {
-            double need = mineTime(world.get(mineX, mineY, mineZ));
+            double need = mineNeed(world.get(mineX, mineY, mineZ));
             float frac = need <= 0 ? 1f : (float) Math.min(1, mineProg / need);
             float bw = 80, bh = 8, bx = cx - bw / 2, by = cy + 22;
             glColor3f(0.2f, 0.2f, 0.2f); quad(bx, by, bx + bw, by + bh);
@@ -1073,15 +1164,18 @@ public class Main {
         drawToast();
         drawChat();
 
-        // first-person held sword in the bottom-right, tilted like it's in hand
-        if (hasSword && swordTex != 0) {
+        // first-person held item in the bottom-right: pickaxe while mining, else sword
+        boolean mining = breakHeld && mineX != Integer.MIN_VALUE;
+        int heldTex = hasPickaxe && (mining || !hasSword) ? pickTex
+                    : hasSword ? swordTex : 0;
+        if (heldTex != 0) {
             float hs = Math.min(width, height) * 0.42f; // sword size
             float cxp = width - hs * 0.45f, cyp = height - hs * 0.30f; // pivot near corner
             glPushMatrix();
             glTranslatef(cxp, cyp, 0);
             glRotatef(-35, 0, 0, 1);   // tilt
             glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, swordTex);
+            glBindTexture(GL_TEXTURE_2D, heldTex);
             glColor4f(1, 1, 1, 1);
             float h = hs / 2;
             glBegin(GL_QUADS);
@@ -1725,8 +1819,21 @@ public class Main {
         // keep GL_BLEND on: the held sword is drawn after this and needs alpha
     }
 
-    /** Draw nicknames (and a blue premium tick) above remote players. */
+    /** Draw nicknames (and a blue premium tick) above remote players and NPCs. */
     private void drawNameTags() {
+        // villager name tags (singleplayer)
+        if (!multiplayer)
+            for (Npc n : npcs) {
+                float[] sc = worldToScreen(n.x, n.y + 1.95, n.z);
+                if (sc == null) continue;
+                float ps = 2.5f, w = Font5x7.width(n.name, ps);
+                float x = sc[0] - w / 2, y = sc[1];
+                glDisable(GL_TEXTURE_2D);
+                glColor4f(0, 0, 0, 0.5f);
+                quad(x - 4, y - 3, x + w + 4, y + 7 * ps + 3);
+                glColor3f(1, 1, 0.85f);
+                Font5x7.draw(n.name, x, y, ps);
+            }
         if (!multiplayer || remotePlayers.isEmpty()) return;
         for (java.util.Map.Entry<Integer, double[]> en : remotePlayers.entrySet()) {
             int id = en.getKey();

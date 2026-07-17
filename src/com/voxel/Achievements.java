@@ -15,6 +15,7 @@ public class Achievements {
         {"BUILDER",     "BUILDER",       "PLACE YOUR FIRST BLOCK"},
         {"WOOD",        "TIMBER",        "PICK UP WOOD"},
         {"SWORD",       "ARMED",         "FORGE THE SWORD"},
+        {"PICK",        "STONE AGE",     "FORGE THE PICKAXE"},
         {"ZOMBIE",      "ZOMBIE SLAYER", "KILL A ZOMBIE"},
         {"BRUTE",       "GIANT DOWN",    "KILL A BRUTE"},
         {"HUNTER",      "HUNTER",        "KILL AN ANIMAL"},

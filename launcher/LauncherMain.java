@@ -19,6 +19,7 @@ import java.util.zip.ZipFile;
  */
 public class LauncherMain {
     static final String REPO = "PacHub228/PACMine";
+    static final String GV_API = "https://gitverse.ru/api/repos/PacPerlar/PacMine";   // RU mirror
     static final String MESA_ZIP = "https://raw.githubusercontent.com/PacHub228/PACMine/mesa/mesa-win.zip";
     static final String BACKEND = "http://185.218.137.116";
     static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
@@ -806,7 +807,12 @@ public class LauncherMain {
         appendLog("Downloading " + ref + " ...");
         Files.createDirectories(HOME);
         Path zip = HOME.resolve("game.zip");
-        download(archiveUrl(ref), zip);
+        try {
+            download(archiveUrl(ref), zip);
+        } catch (IOException e) {
+            appendLog("GitHub недоступен, качаю с зеркала GitVerse...");
+            download(GV_API + "/archive/" + ref + ".zip", zip);
+        }
         setStatus("Extracting...", 40);
         // clean previous extraction dirs
         deleteExtracted();
@@ -879,13 +885,26 @@ public class LauncherMain {
             String json = httpGet("https://api.github.com/repos/" + REPO + "/releases?per_page=20");
             Matcher m = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
             while (m.find()) out.add(m.group(1));
-        } catch (Exception e) { appendLog("Could not fetch versions: " + e.getMessage()); }
+        } catch (Exception e) { appendLog("GitHub недоступен (" + e.getMessage() + "), пробую GitVerse..."); }
+        if (out.isEmpty()) {
+            try {
+                String json = httpGet(GV_API + "/tags");
+                Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"(v[^\"]+)\"").matcher(json);
+                while (m.find()) out.add(m.group(1));
+                if (!out.isEmpty()) appendLog("Версии получены с зеркала GitVerse");
+            } catch (Exception e) { appendLog("GitVerse тоже недоступен: " + e.getMessage()); }
+        }
         return out;
     }
 
     static String latestSha(String ref) {
         try {
             String json = httpGet("https://api.github.com/repos/" + REPO + "/commits/" + ref);
+            Matcher m = Pattern.compile("\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").matcher(json);
+            if (m.find()) return m.group(1);
+        } catch (Exception ignored) {}
+        try {   // GitVerse mirror
+            String json = httpGet(GV_API + "/commits?sha=" + ref + "&per_page=1");
             Matcher m = Pattern.compile("\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").matcher(json);
             if (m.find()) return m.group(1);
         } catch (Exception ignored) {}
@@ -964,17 +983,21 @@ public class LauncherMain {
         }
     }
 
+    static boolean isGameDir(String name) {
+        return name.startsWith("PACMine-") || name.equalsIgnoreCase("pacmine");
+    }
+
     static Path findExtracted() throws IOException {
         try (var s = Files.list(HOME)) {
             return s.filter(Files::isDirectory)
-                    .filter(p -> p.getFileName().toString().startsWith("PACMine-"))
+                    .filter(p -> isGameDir(p.getFileName().toString()))
                     .findFirst().orElse(null);
         }
     }
     static void deleteExtracted() throws IOException {
         try (var s = Files.list(HOME)) {
             for (Path p : (Iterable<Path>) s::iterator)
-                if (Files.isDirectory(p) && p.getFileName().toString().startsWith("PACMine-")) deleteDir(p);
+                if (Files.isDirectory(p) && isGameDir(p.getFileName().toString())) deleteDir(p);
         }
     }
 

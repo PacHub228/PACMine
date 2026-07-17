@@ -37,7 +37,7 @@ public class LauncherMain {
     static JLabel status, versionInfo, account;
     static JProgressBar bar;
     static JButton play, update, openFolder, loginBtn, guestBtn;
-    static JComboBox<String> versionBox;
+    static JComboBox<String> versionBox, mirrorBox;
     static JCheckBox swGl, devBox;
     static JTextArea log, news;
     static final Properties cfg = new Properties();
@@ -435,6 +435,21 @@ public class LauncherMain {
         swGl.setVisible(WINDOWS);
         swGl.addActionListener(e -> saveCfg());
         g.gridy = 3; verCard.add(swGl, g);
+
+        JLabel mlab = new JLabel("ЗЕРКАЛО");
+        mlab.setForeground(SUB); mlab.setFont(new Font("SansSerif", Font.BOLD, 11));
+        g.gridy = 4; verCard.add(mlab, g);
+        boolean ruRegion = "RU".equals(java.util.Locale.getDefault().getCountry());
+        mirrorBox = new JComboBox<>(new String[]{
+            "GitHub" + (ruRegion ? "" : "  — рекомендуется"),
+            "GitVerse" + (ruRegion ? "  — рекомендуется" : "")
+        });
+        styleCombo(mirrorBox);
+        String savedMirror = cfg.getProperty("mirror", "");
+        mirrorBox.setSelectedIndex(savedMirror.isEmpty() ? (ruRegion ? 1 : 0)
+                                   : savedMirror.equals("gitverse") ? 1 : 0);
+        mirrorBox.addActionListener(e -> { saveCfg(); fetchVersionsAsync(); checkUpdateAsync(); });
+        g.gridy = 5; verCard.add(mirrorBox, g);
         cards.add(verCard);
 
         Card accCard = new Card(new GridBagLayout());
@@ -757,6 +772,10 @@ public class LauncherMain {
 
     // ---------------- actions ----------------
     static final String MAIN_LABEL = "main (последняя версия)";
+    static boolean gvFirst() {
+        return mirrorBox != null && String.valueOf(mirrorBox.getSelectedItem()).startsWith("GitVerse");
+    }
+
     static String ref() {
         if (devBox != null && devBox.isSelected()) return "main";   // dev: latest commit
         Object s = versionBox.getSelectedItem();
@@ -807,11 +826,13 @@ public class LauncherMain {
         appendLog("Downloading " + ref + " ...");
         Files.createDirectories(HOME);
         Path zip = HOME.resolve("game.zip");
+        String ghZip = archiveUrl(ref), gvZip = GV_API + "/archive/" + ref + ".zip";
         try {
-            download(archiveUrl(ref), zip);
+            download(gvFirst() ? gvZip : ghZip, zip);
         } catch (IOException e) {
-            appendLog("GitHub недоступен, качаю с зеркала GitVerse...");
-            download(GV_API + "/archive/" + ref + ".zip", zip);
+            appendLog((gvFirst() ? "GitVerse" : "GitHub") + " недоступен, качаю с зеркала "
+                + (gvFirst() ? "GitHub" : "GitVerse") + "...");
+            download(gvFirst() ? ghZip : gvZip, zip);
         }
         setStatus("Extracting...", 40);
         // clean previous extraction dirs
@@ -879,36 +900,50 @@ public class LauncherMain {
         }, "launcher-versions").start();
     }
 
-    static List<String> fetchReleaseTags() {
+    static List<String> tagsFromGitHub() throws IOException {
         List<String> out = new ArrayList<>();
-        try {
-            String json = httpGet("https://api.github.com/repos/" + REPO + "/releases?per_page=20");
-            Matcher m = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
-            while (m.find()) out.add(m.group(1));
-        } catch (Exception e) { appendLog("GitHub недоступен (" + e.getMessage() + "), пробую GitVerse..."); }
-        if (out.isEmpty()) {
-            try {
-                String json = httpGet(GV_API + "/tags");
-                Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"(v[^\"]+)\"").matcher(json);
-                while (m.find()) out.add(m.group(1));
-                if (!out.isEmpty()) appendLog("Версии получены с зеркала GitVerse");
-            } catch (Exception e) { appendLog("GitVerse тоже недоступен: " + e.getMessage()); }
-        }
+        String json = httpGet("https://api.github.com/repos/" + REPO + "/releases?per_page=20");
+        Matcher m = Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
+        while (m.find()) out.add(m.group(1));
         return out;
     }
 
-    static String latestSha(String ref) {
+    static List<String> tagsFromGitVerse() throws IOException {
+        List<String> out = new ArrayList<>();
+        String json = httpGet(GV_API + "/tags");
+        Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"(v[^\"]+)\"").matcher(json);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
+
+    static List<String> fetchReleaseTags() {
+        boolean gv = gvFirst();
+        String first = gv ? "GitVerse" : "GitHub", second = gv ? "GitHub" : "GitVerse";
         try {
-            String json = httpGet("https://api.github.com/repos/" + REPO + "/commits/" + ref);
-            Matcher m = Pattern.compile("\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").matcher(json);
-            if (m.find()) return m.group(1);
-        } catch (Exception ignored) {}
-        try {   // GitVerse mirror
-            String json = httpGet(GV_API + "/commits?sha=" + ref + "&per_page=1");
-            Matcher m = Pattern.compile("\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").matcher(json);
+            List<String> out = gv ? tagsFromGitVerse() : tagsFromGitHub();
+            if (!out.isEmpty()) return out;
+        } catch (Exception e) { appendLog(first + " недоступен (" + e.getMessage() + "), пробую " + second + "..."); }
+        try {
+            List<String> out = gv ? tagsFromGitHub() : tagsFromGitVerse();
+            if (!out.isEmpty()) appendLog("Версии получены с зеркала " + second);
+            return out;
+        } catch (Exception e) { appendLog(second + " тоже недоступен: " + e.getMessage()); }
+        return new ArrayList<>();
+    }
+
+    static String shaFrom(String url) {
+        try {
+            Matcher m = Pattern.compile("\"sha\"\\s*:\\s*\"([0-9a-f]{40})\"").matcher(httpGet(url));
             if (m.find()) return m.group(1);
         } catch (Exception ignored) {}
         return null;
+    }
+
+    static String latestSha(String ref) {
+        String gh = "https://api.github.com/repos/" + REPO + "/commits/" + ref;
+        String gvu = GV_API + "/commits?sha=" + ref + "&per_page=1";
+        String s = shaFrom(gvFirst() ? gvu : gh);
+        return s != null ? s : shaFrom(gvFirst() ? gh : gvu);
     }
 
     static String archiveUrl(String ref) {
@@ -1034,6 +1069,7 @@ public class LauncherMain {
         cfg.setProperty("ref", ref());
         cfg.setProperty("vm", String.valueOf(swGl != null && swGl.isSelected()));
         cfg.setProperty("dev", String.valueOf(devBox != null && devBox.isSelected()));
+        cfg.setProperty("mirror", gvFirst() ? "gitverse" : "github");
         try { Files.createDirectories(HOME); try (OutputStream o = Files.newOutputStream(CFG)) { cfg.store(o, "PACMine launcher"); } }
         catch (IOException ignored) {}
     }

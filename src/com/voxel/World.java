@@ -13,7 +13,11 @@ public class World {
     public static final int CHUNK = 14;   // chunk footprint in blocks
     public static final int SY = 64;      // world height (fixed)
 
-    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9, WATER = 10, LAVA = 11;
+    public static final byte AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, WOOD = 4, LEAVES = 5, SAND = 6, BEDROCK = 7, COAL = 8, IRON = 9, WATER = 10, LAVA = 11,
+                             PLANKS = 12, FURNACE = 13, GLASS = 14;
+    // ids >= 16 are items: they live in the inventory but can't be placed
+    public static final byte INGOT_IRON = 16;
+    public static boolean isItem(byte b) { return b >= 16; }
     public static final int SEA = 19;     // water fills terrain up to this height
 
     public final boolean infinite;
@@ -260,6 +264,9 @@ public class World {
             case IRON:   return new float[]{0.65f, 0.55f, 0.45f};
             case WATER:  return new float[]{0.25f, 0.45f, 0.85f};
             case LAVA:   return new float[]{0.95f, 0.45f, 0.10f};
+            case PLANKS: return new float[]{0.62f, 0.45f, 0.26f};
+            case FURNACE: return new float[]{0.42f, 0.42f, 0.44f};
+            case GLASS:  return new float[]{0.75f, 0.85f, 0.92f};
             default:     return new float[]{1f, 0f, 1f};
         }
     }

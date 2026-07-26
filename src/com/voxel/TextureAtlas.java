@@ -21,10 +21,11 @@ public class TextureAtlas {
     // tile order in the atlas
     public static final int GRASS_TOP = 0, GRASS_SIDE = 1, DIRT = 2, STONE = 3,
                             WOOD_TOP = 4, WOOD_SIDE = 5, LEAVES = 6, SAND = 7, BEDROCK = 8, COAL = 9, IRON = 10,
-                            WATER = 11, LAVA = 12;
+                            WATER = 11, LAVA = 12, PLANKS = 13, FURNACE_SIDE = 14, FURNACE_TOP = 15,
+                            GLASS = 16, INGOT_IRON = 17;
     private static final String[] FILES = {
         "grass_top", "grass_side", "dirt", "stone", "wood_top", "wood_side", "leaves", "sand", "bedrock", "coal", "iron",
-        "water", "lava"
+        "water", "lava", "planks", "furnace_side", "furnace_top", "glass", "ingot_iron"
     };
     // fallback colours when a PNG is absent (rough match to block colours)
     private static final byte[] FB = block().clone();
@@ -150,6 +151,10 @@ public class TextureAtlas {
             case World.IRON:   return IRON;
             case World.WATER:  return WATER;
             case World.LAVA:   return LAVA;
+            case World.PLANKS: return PLANKS;
+            case World.FURNACE: return (dir == 0 || dir == 1) ? FURNACE_TOP : FURNACE_SIDE;
+            case World.GLASS:  return GLASS;
+            case World.INGOT_IRON: return INGOT_IRON;
             default:           return STONE;
         }
     }
@@ -169,7 +174,12 @@ public class TextureAtlas {
             (byte)60,(byte)60,(byte)64,     // coal
             (byte)165,(byte)140,(byte)115,  // iron
             (byte)64,(byte)115,(byte)217,   // water
-            (byte)242,(byte)115,(byte)26    // lava
+            (byte)242,(byte)115,(byte)26,   // lava
+            (byte)158,(byte)115,(byte)66,   // planks
+            (byte)110,(byte)110,(byte)116,  // furnace_side
+            (byte)110,(byte)110,(byte)116,  // furnace_top
+            (byte)196,(byte)222,(byte)234,  // glass
+            (byte)200,(byte)200,(byte)208   // ingot_iron
         };
     }
 }

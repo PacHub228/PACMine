@@ -135,6 +135,15 @@ public class Main {
     private static final int STONE_FOR_PICK = 3;
     private boolean hasPickaxe = false;
     private int pickTex = 0;
+    private boolean hasIronSword = false, hasIronPick = false;
+
+    // placed furnaces, keyed by block position; opened with right click
+    private final java.util.Map<Long, Furnace> furnaces = new java.util.HashMap<>();
+    private Furnace openFurnace = null;
+    private long openFurnacePos = 0;
+    private static long fkey(int x, int y, int z) {
+        return ((long) (x & 0x3FFFFFF) << 38) | ((long) (y & 0xFFF) << 26) | (z & 0x3FFFFFFL);
+    }
 
     // zombies
     private final java.util.List<Zombie> zombies = new java.util.ArrayList<>();
@@ -326,7 +335,8 @@ public class Main {
         player.creative = creativeMode;
         player.borderWalls = protection && !inf;   // no borders in an endless world
         hasSword = superMode;
-        hasPickaxe = false;
+        hasPickaxe = false; hasIronSword = false; hasIronPick = false;
+        furnaces.clear(); openFurnace = null;
         zombies.clear(); drops.clear(); animals.clear();
         npcs.clear();
         spawnVillagers();
@@ -358,6 +368,16 @@ public class Main {
             player.creative = creativeMode; player.borderWalls = protection && !world.infinite;
             hasSword = s.hasSword;
             hasPickaxe = s.hasPickaxe;
+            hasIronSword = s.hasIronSword; hasIronPick = s.hasIronPick;
+            furnaces.clear(); openFurnace = null;
+            for (double[] d : s.furnaces) {
+                Furnace f = new Furnace();
+                f.inType = (byte) d[1];   f.inCount = (int) d[2];
+                f.fuelType = (byte) d[3]; f.fuelCount = (int) d[4];
+                f.outType = (byte) d[5];  f.outCount = (int) d[6];
+                f.progress = d[7];        f.burnLeft = (int) d[8];
+                furnaces.put((long) d[0], f);
+            }
             timeOfDay = s.timeOfDay; wave = s.wave; waveTimer = s.waveTimer;
             selectedSlot = (s.selectedSlot >= 0 && s.selectedSlot < HOT) ? s.selectedSlot : 2;
             if (s.slotType != null) {                       // PMS4 slot inventory
@@ -413,6 +433,12 @@ public class Main {
         s.yaw = player.yaw; s.pitch = player.pitch; s.health = player.health;
         s.hasSword = hasSword;
         s.hasPickaxe = hasPickaxe;
+        s.hasIronSword = hasIronSword; s.hasIronPick = hasIronPick;
+        for (java.util.Map.Entry<Long, Furnace> e : furnaces.entrySet()) {
+            Furnace f = e.getValue();
+            s.furnaces.add(new double[]{e.getKey(), f.inType, f.inCount, f.fuelType, f.fuelCount,
+                                        f.outType, f.outCount, f.progress, f.burnLeft});
+        }
         s.timeOfDay = timeOfDay; s.wave = wave; s.waveTimer = waveTimer;
         s.selectedSlot = selectedSlot;
         s.slotType = slotType.clone(); s.slotCount = slotCount.clone();
@@ -440,7 +466,8 @@ public class Main {
         spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
         player = new Player(world, spawnX + 0.5, spawnY, spawnZ + 0.5);
         player.creative = creativeMode; player.borderWalls = protection;
-        hasSword = false; hasPickaxe = false;
+        hasSword = false; hasPickaxe = false; hasIronSword = false; hasIronPick = false;
+        furnaces.clear(); openFurnace = null;
         zombies.clear(); drops.clear(); animals.clear(); npcs.clear();  // mobs disabled in multiplayer v1
         initSlots();
         remotePlayers.clear(); netQueue.clear();
@@ -785,7 +812,15 @@ public class Main {
         if (button == GLFW_MOUSE_BUTTON_LEFT)  breakHeld = down;
         if (button == GLFW_MOUSE_BUTTON_RIGHT) placeHeld = down;
         if (down) {
-            if (button == GLFW_MOUSE_BUTTON_RIGHT) { placeBlock(); return; }
+            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                int[] r = raycast();
+                if (r != null && world.get(r[0], r[1], r[2]) == World.FURNACE) {
+                    openFurnaceAt(r[0], r[1], r[2]);
+                    return;
+                }
+                placeBlock();
+                return;
+            }
             // left click: hit a zombie if armed, an animal bare-handed, else break
             if (hasSword && attackZombie()) return;
             if (!multiplayer && attackAnimal()) return;
@@ -815,7 +850,7 @@ public class Main {
             if (miss < 1.3 && t < bestT) { bestT = t; best = z; } // roughly aimed at
         }
         if (best != null) {
-            if (best.hit(1, player.x, player.z)) {   // dies only when hp runs out
+            if (best.hit(hasIronSword ? 5 : 1, player.x, player.z)) {   // iron sword one-shots
                 zombies.remove(best);
                 award("ZOMBIE");
                 if (best.type == Zombie.BRUTE) award("BRUTE");
@@ -828,6 +863,7 @@ public class Main {
     /** Close the inventory, returning any carried stack to the slots. */
     private void closeInventory() {
         if (carryCount > 0) { addItem(carryType, carryCount); carryType = World.AIR; carryCount = 0; }
+        openFurnace = null;
         inventoryOpen = false;
         grabCursor();
     }
@@ -850,8 +886,10 @@ public class Main {
 
     /** Seconds to mine a block for THIS player (pickaxe speeds up the stone family). */
     private double mineNeed(byte b) {
-        boolean pickHelps = b == World.STONE || b == World.COAL || b == World.IRON;
-        return mineTime(b) / (hasPickaxe && pickHelps ? 3.0 : 1.0);
+        boolean pickHelps = b == World.STONE || b == World.COAL || b == World.IRON || b == World.FURNACE;
+        double speed = 1.0;
+        if (pickHelps) speed = hasIronPick ? 6.0 : hasPickaxe ? 3.0 : 1.0;
+        return mineTime(b) / speed;
     }
 
     /** Seconds needed to mine a block. */
@@ -914,12 +952,13 @@ public class Main {
         if (world.isSolid(px, py, pz)) return;
         if (intersectsPlayer(px, py, pz)) return;   // don't place a block inside yourself
         byte b = currentBlock();
-        if (b == World.AIR) return;
+        if (b == World.AIR || World.isItem(b)) return;   // ingots etc. aren't blocks
         if (!player.creative) {
             if (slotCount[selectedSlot] <= 0) return;   // nothing to place
             slotCount[selectedSlot]--;
         }
         world.set(px, py, pz, b);
+        if (b == World.FURNACE) furnaces.put(fkey(px, py, pz), new Furnace());
         renderer.markDirty(px, pz);
         netBlock(px, py, pz, b);
         if (liquidSim != null) liquidSim.disturb(px, py, pz);
@@ -939,6 +978,15 @@ public class Main {
         byte broken = world.get(bx, by, bz);
         if (broken == World.AIR || broken == World.BEDROCK) return;
         world.set(bx, by, bz, World.AIR);
+        if (broken == World.FURNACE) {                 // spill the furnace contents
+            Furnace f = furnaces.remove(fkey(bx, by, bz));
+            if (f != null) {
+                if (f.inCount > 0)   drops.add(new ItemDrop(world, f.inType,   bx + 0.5, by + 0.4, bz + 0.5));
+                if (f.fuelCount > 0) drops.add(new ItemDrop(world, f.fuelType, bx + 0.5, by + 0.4, bz + 0.5));
+                if (f.outCount > 0)  drops.add(new ItemDrop(world, f.outType,  bx + 0.5, by + 0.4, bz + 0.5));
+            }
+            if (openFurnace == f) openFurnace = null;
+        }
         renderer.markDirty(bx, bz);
         netBlock(bx, by, bz, World.AIR);
         if (liquidSim != null) liquidSim.disturb(bx, by, bz);   // let nearby liquid pour in
@@ -989,17 +1037,11 @@ public class Main {
                 updateMining(dt);
                 updateDrops(dt);
                 if (liquidSim != null) liquidSim.tick(dt);
-                // forge the sword once 3 wood have been gathered
-                if (!hasSword && countOf(World.WOOD) >= WOOD_FOR_SWORD) {
-                    consume(World.WOOD, WOOD_FOR_SWORD);
-                    hasSword = true;
-                    award("SWORD");
-                }
-                // forge the pickaxe once 3 stone have been gathered
-                if (!hasPickaxe && countOf(World.STONE) >= STONE_FOR_PICK) {
-                    consume(World.STONE, STONE_FOR_PICK);
-                    hasPickaxe = true;
-                    award("PICK");
+                // furnaces smelt while the world runs
+                for (Furnace f : furnaces.values()) {
+                    int before = f.outCount;
+                    f.tick(dt);
+                    if (f.outCount > before) award("SMELT");
                 }
                 if (superMode) timeOfDay = 0.25;                       // Super: eternal noon
                 else timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1.0;
@@ -1891,8 +1933,14 @@ public class Main {
     }
 
     private static final String[] BLOCK_NAMES = {
-        "AIR", "GRASS", "DIRT", "STONE", "WOOD", "LEAVES", "SAND", "BEDROCK", "COAL", "IRON", "WATER", "LAVA"
+        "ВОЗДУХ", "ТРАВА", "ЗЕМЛЯ", "КАМЕНЬ", "ДЕРЕВО", "ЛИСТВА", "ПЕСОК", "БЕДРОК", "УГОЛЬ", "ЖЕЛЕЗО",
+        "ВОДА", "ЛАВА", "ДОСКИ", "ПЕЧКА", "СТЕКЛО"
     };
+
+    static String blockName(byte b) {
+        if (b == World.INGOT_IRON) return "СЛИТОК ЖЕЛЕЗА";
+        return b >= 0 && b < BLOCK_NAMES.length ? BLOCK_NAMES[b] : "?";
+    }
 
     // Minecraft-style inventory layout: 3x8 grid on top, hotbar row below
     private static final float INV_CELL = 58, INV_GAP = 5, INV_PAD = 20;
@@ -1922,6 +1970,8 @@ public class Main {
 
     /** Minecraft-style click: pick up a stack / put it down / merge / swap. */
     private void inventoryClick() {
+        if (openFurnace != null) { if (furnaceClick()) return; }
+        else if (craftClick()) return;
         int s = slotAtMouse();
         if (s < 0) return;
         if (carryCount == 0) {                                   // pick up
@@ -1981,6 +2031,179 @@ public class Main {
         }
     }
 
+
+    // ---------------- crafting panel (right of the inventory) ----------------
+    private static final float CRAFT_W = 250, CRAFT_ROW = 34;
+    private float craftX() { return invX() + invPanelW() + 12; }
+    private float craftY() { return invY(); }
+    private float craftRowY(int i) { return craftY() + 54 + i * CRAFT_ROW; }
+
+    private boolean canCraft(Recipes.Recipe r) {
+        for (int i = 0; i < r.inputs.length; i++)
+            if (countOf(r.inputs[i]) < r.counts[i]) return false;
+        if (r.tool == Recipes.TOOL_SWORD && hasSword) return false;
+        if (r.tool == Recipes.TOOL_PICK && hasPickaxe) return false;
+        if (r.tool == Recipes.TOOL_IRON_SWORD && hasIronSword) return false;
+        if (r.tool == Recipes.TOOL_IRON_PICK && hasIronPick) return false;
+        return true;
+    }
+
+    private void craft(Recipes.Recipe r) {
+        if (!canCraft(r)) return;
+        for (int i = 0; i < r.inputs.length; i++) consume(r.inputs[i], r.counts[i]);
+        if (r.tool != Recipes.TOOL_NONE) {
+            switch (r.tool) {
+                case Recipes.TOOL_SWORD:      hasSword = true; award("SWORD"); break;
+                case Recipes.TOOL_PICK:       hasPickaxe = true; award("PICK"); break;
+                case Recipes.TOOL_IRON_SWORD: hasIronSword = true; hasSword = true; award("IRONSWORD"); break;
+                case Recipes.TOOL_IRON_PICK:  hasIronPick = true; hasPickaxe = true; award("IRONPICK"); break;
+            }
+            addChat("Скрафчено: " + Recipes.toolName(r.tool));
+        } else {
+            addItem(r.output, r.outCount);
+            addChat("Скрафчено: " + blockName(r.output) + " x" + r.outCount);
+        }
+        award("CRAFT");
+    }
+
+    /** Click inside the crafting list; true if it handled the click. */
+    private boolean craftClick() {
+        for (int i = 0; i < Recipes.ALL.length; i++) {
+            float y = craftRowY(i);
+            if (mouseX >= craftX() && mouseX <= craftX() + CRAFT_W && mouseY >= y && mouseY <= y + CRAFT_ROW - 4) {
+                craft(Recipes.ALL[i]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void drawCraftPanel() {
+        float px = craftX(), py = craftY(), pw = CRAFT_W;
+        float ph = 54 + Recipes.ALL.length * CRAFT_ROW + INV_PAD;
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(0, 0, 0, 0.4f); quad(px + 5, py + 5, px + pw + 5, py + ph + 5);
+        glColor4f(0.22f, 0.24f, 0.30f, 0.98f); quad(px, py, px + pw, py + ph);
+        glColor4f(0.42f, 0.46f, 0.55f, 1f);
+        float bt = 2;
+        quad(px, py, px + pw, py + bt); quad(px, py + ph - bt, px + pw, py + ph);
+        quad(px, py, px + bt, py + ph); quad(px + pw - bt, py, px + pw, py + ph);
+        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("КРАФТ", px + 16 + 2, py + 17, 3);
+        glColor3f(0.85f, 0.95f, 0.6f); Font5x7.draw("КРАФТ", px + 16, py + 15, 3);
+
+        for (int i = 0; i < Recipes.ALL.length; i++) {
+            Recipes.Recipe r = Recipes.ALL[i];
+            float y = craftRowY(i);
+            boolean ok = canCraft(r);
+            boolean hover = mouseX >= px && mouseX <= px + pw && mouseY >= y && mouseY <= y + CRAFT_ROW - 4;
+            glDisable(GL_TEXTURE_2D);
+            glColor4f(ok ? 0.18f : 0.12f, ok ? 0.22f : 0.13f, ok ? 0.16f : 0.15f, hover && ok ? 0.95f : 0.7f);
+            quad(px + 8, y, px + pw - 8, y + CRAFT_ROW - 6);
+            if (ok) { glColor4f(0.55f, 0.85f, 0.4f, 1f); quad(px + 8, y, px + 11, y + CRAFT_ROW - 6); }
+            // name
+            String nm = r.tool != Recipes.TOOL_NONE ? Recipes.toolName(r.tool)
+                                                    : blockName(r.output) + " x" + r.outCount;
+            glColor4f(1, 1, 1, ok ? 1f : 0.4f);
+            Font5x7.draw(nm, px + 16, y + 3, 1.9f);
+            // ingredients
+            StringBuilder need = new StringBuilder();
+            for (int k = 0; k < r.inputs.length; k++) {
+                if (k > 0) need.append(" + ");
+                need.append(blockName(r.inputs[k])).append(" ").append(r.counts[k]);
+            }
+            glColor4f(1, 1, 1, ok ? 0.65f : 0.3f);
+            Font5x7.draw(need.toString(), px + 16, y + 17, 1.4f);
+        }
+        glColor4f(1, 1, 1, 0.45f);
+        Font5x7.draw("КЛИК - СКРАФТИТЬ", px + 16, py + ph - 16, 1.5f);
+    }
+
+    // ---------------- furnace screen ----------------
+    private void openFurnaceAt(int x, int y, int z) {
+        long k = fkey(x, y, z);
+        Furnace f = furnaces.get(k);
+        if (f == null) { f = new Furnace(); furnaces.put(k, f); }
+        openFurnace = f; openFurnacePos = k;
+        inventoryOpen = true;                    // inventory shows alongside
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+
+    private float furnX() { return invX() + invPanelW() + 12; }
+    private float furnY() { return invY(); }
+    private static final float FURN_W = 250, FURN_H = 300, FCELL = 58;
+    private float furnSlotX() { return furnX() + FURN_W / 2 - FCELL / 2; }
+    private float furnInY()   { return furnY() + 52; }
+    private float furnFuelY() { return furnY() + 52 + FCELL + 34; }
+    private float furnOutY()  { return furnY() + 52 + (FCELL + 34) * 2 + 4; }
+
+    /** Click in the furnace screen; true if handled. */
+    private boolean furnaceClick() {
+        if (openFurnace == null) return false;
+        float sx = furnSlotX();
+        float[] ys = {furnInY(), furnFuelY(), furnOutY()};
+        for (int i = 0; i < 3; i++) {
+            if (mouseX < sx || mouseX > sx + FCELL || mouseY < ys[i] || mouseY > ys[i] + FCELL) continue;
+            Furnace f = openFurnace;
+            if (i == 2) {                                   // output: take only
+                if (f.outCount > 0 && carryCount == 0) {
+                    carryType = f.outType; carryCount = f.outCount;
+                    f.outType = World.AIR; f.outCount = 0;
+                }
+                return true;
+            }
+            byte slotT = i == 0 ? f.inType : f.fuelType;
+            int slotC = i == 0 ? f.inCount : f.fuelCount;
+            if (carryCount == 0) {                          // take the stack
+                carryType = slotT; carryCount = slotC;
+                slotT = World.AIR; slotC = 0;
+            } else if (slotC == 0 || slotT == carryType) {  // drop / merge
+                slotT = carryType; slotC = slotC + carryCount;
+                carryType = World.AIR; carryCount = 0;
+            } else {                                        // swap
+                byte t = slotT; int n = slotC;
+                slotT = carryType; slotC = carryCount;
+                carryType = t; carryCount = n;
+            }
+            if (i == 0) { f.inType = slotT; f.inCount = slotC; }
+            else        { f.fuelType = slotT; f.fuelCount = slotC; }
+            return true;
+        }
+        return false;
+    }
+
+    private void drawFurnaceSlot(float x, float y, byte type, int count, String label) {
+        drawSlot(x, y, type, count, false, mouseX >= x && mouseX <= x + FCELL && mouseY >= y && mouseY <= y + FCELL);
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(1, 1, 1, 0.5f);
+        Font5x7.draw(label, x + FCELL + 10, y + FCELL / 2 - 6, 1.6f);
+    }
+
+    private void drawFurnace() {
+        Furnace f = openFurnace;
+        float px = furnX(), py = furnY();
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(0, 0, 0, 0.4f); quad(px + 5, py + 5, px + FURN_W + 5, py + FURN_H + 5);
+        glColor4f(0.22f, 0.24f, 0.30f, 0.98f); quad(px, py, px + FURN_W, py + FURN_H);
+        glColor4f(0.42f, 0.46f, 0.55f, 1f);
+        float bt = 2;
+        quad(px, py, px + FURN_W, py + bt); quad(px, py + FURN_H - bt, px + FURN_W, py + FURN_H);
+        quad(px, py, px + bt, py + FURN_H); quad(px + FURN_W - bt, py, px + FURN_W, py + FURN_H);
+        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("ПЕЧКА", px + 16 + 2, py + 17, 3);
+        glColor3f(0.85f, 0.95f, 0.6f); Font5x7.draw("ПЕЧКА", px + 16, py + 15, 3);
+
+        float sx = furnSlotX();
+        drawFurnaceSlot(sx, furnInY(), f.inType, f.inCount, "ПЛАВИТЬ");
+        drawFurnaceSlot(sx, furnFuelY(), f.fuelType, f.fuelCount, f.burning() ? "ГОРИТ" : "ТОПЛИВО");
+        drawFurnaceSlot(sx, furnOutY(), f.outType, f.outCount, "ГОТОВО");
+
+        // progress bar between input and output
+        float bx = sx - 4, by = furnFuelY() + FCELL + 12, bw = FCELL + 8, bh = 8;
+        glDisable(GL_TEXTURE_2D);
+        glColor4f(0, 0, 0, 0.5f); quad(bx, by, bx + bw, by + bh);
+        float frac = (float) (f.progress / Furnace.SMELT_TIME);
+        glColor4f(0.95f, 0.6f, 0.2f, 1f); quad(bx, by, bx + bw * frac, by + bh);
+    }
+
     /** Minecraft-style inventory (E): grid + hotbar, click to move stacks around. */
     private void drawInventory() {
         glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
@@ -2021,6 +2244,8 @@ public class Main {
         for (int i = 0; i < HOT; i++)
             drawSlot(invCellX(i), invHotbarY(), slotType[i], slotCount[i],
                      i == selectedSlot, i == hoverSlot);
+
+        if (openFurnace != null) drawFurnace(); else drawCraftPanel();
 
         // carried stack rides on the cursor, above everything
         if (carryCount > 0) {

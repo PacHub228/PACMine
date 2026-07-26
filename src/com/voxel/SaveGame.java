@@ -21,6 +21,7 @@ public class SaveGame {
     private static final int MAGIC_PMS4 = 0x504D5334;  // "PMS4" slot-based inventory
     private static final int MAGIC_PMS5 = 0x504D5335;  // "PMS5" adds villager NPCs
     private static final int MAGIC_PMS6 = 0x504D5336;  // "PMS6" adds the pickaxe
+    private static final int MAGIC_PMS7 = 0x504D5337;  // "PMS7" adds furnaces + iron tools
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
@@ -32,6 +33,9 @@ public class SaveGame {
     public double health;
     public boolean hasSword;
     public boolean hasPickaxe;
+    public boolean hasIronSword, hasIronPick;
+    // furnaces: {posKey, inType, inCount, fuelType, fuelCount, outType, outCount, progress, burnLeft}
+    public List<double[]> furnaces = new ArrayList<>();
     public int logsBroken;
     public byte[] blocks;
 
@@ -85,7 +89,7 @@ public class SaveGame {
         DIR.mkdirs();
         ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(buf))) {
-            out.writeInt(MAGIC_PMS6);
+            out.writeInt(MAGIC_PMS7);
             out.writeBoolean(infinite);
             if (!infinite) out.writeInt(chunks);
             out.writeBoolean(hostileMobs);
@@ -97,6 +101,8 @@ public class SaveGame {
             out.writeDouble(health);
             out.writeBoolean(hasSword);
             out.writeBoolean(hasPickaxe);
+            out.writeBoolean(hasIronSword);
+            out.writeBoolean(hasIronPick);
             out.writeInt(logsBroken);
             out.writeDouble(timeOfDay);
             out.writeInt(wave); out.writeDouble(waveTimer);
@@ -132,6 +138,14 @@ public class SaveGame {
                 out.writeDouble(d[0]); out.writeDouble(d[1]); out.writeDouble(d[2]);
                 out.writeFloat((float) d[3]);
             }
+            out.writeInt(furnaces.size());
+            for (double[] f : furnaces) {
+                out.writeLong((long) f[0]);
+                out.writeByte((byte) f[1]); out.writeInt((int) f[2]);
+                out.writeByte((byte) f[3]); out.writeInt((int) f[4]);
+                out.writeByte((byte) f[5]); out.writeInt((int) f[6]);
+                out.writeDouble(f[7]); out.writeInt((int) f[8]);
+            }
             if (infinite) {
                 out.writeLong(seed);
                 out.writeInt(chunkMap.size());
@@ -156,7 +170,7 @@ public class SaveGame {
         try (DataInputStream in = new DataInputStream(new GZIPInputStream(
                 new ByteArrayInputStream(raw)))) {
             int magic = in.readInt();
-            if (magic >= MAGIC_PMS && magic <= MAGIC_PMS6)
+            if (magic >= MAGIC_PMS && magic <= MAGIC_PMS7)
                 return loadPms(in, magic - MAGIC_PMS + 1);
             if (magic == MAGIC || magic == MAGIC_INF) return loadLegacy(in, magic);
             throw new IOException("bad save file");
@@ -164,7 +178,7 @@ public class SaveGame {
     }
 
     private static SaveGame loadPms(DataInputStream in, int ver) throws IOException {
-        boolean v2 = ver >= 2, v3 = ver >= 3, v4 = ver >= 4, v5 = ver >= 5, v6 = ver >= 6;
+        boolean v2 = ver >= 2, v3 = ver >= 3, v4 = ver >= 4, v5 = ver >= 5, v6 = ver >= 6, v7 = ver >= 7;
         SaveGame s = new SaveGame();
         s.infinite = in.readBoolean();
         if (!s.infinite) s.chunks = in.readInt();
@@ -177,6 +191,7 @@ public class SaveGame {
         s.health = in.readDouble();
         s.hasSword = in.readBoolean();
         if (v6) s.hasPickaxe = in.readBoolean();
+        if (v7) { s.hasIronSword = in.readBoolean(); s.hasIronPick = in.readBoolean(); }
         s.logsBroken = in.readInt();
         s.timeOfDay = in.readDouble();
         s.wave = in.readInt(); s.waveTimer = in.readDouble();
@@ -215,6 +230,12 @@ public class SaveGame {
                 s.npcNames.add(in.readUTF());
                 s.npcData.add(new double[]{in.readDouble(), in.readDouble(), in.readDouble(), in.readFloat()});
             }
+        }
+        if (v7) {
+            int nf = in.readInt();
+            for (int i = 0; i < nf; i++)
+                s.furnaces.add(new double[]{in.readLong(), in.readByte(), in.readInt(), in.readByte(),
+                                            in.readInt(), in.readByte(), in.readInt(), in.readDouble(), in.readInt()});
         }
         readWorld(in, s);
         return s;

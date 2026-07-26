@@ -9,7 +9,9 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - First-person movement with gravity, jumping and AABB collision
 - Place / break blocks via raycasting (6 block types + unbreakable bedrock)
 - Textured blocks loaded from `assets/` into a runtime texture atlas
-- Have 3 wood in your inventory and a **sword** forges itself, shown first-person in your hand
+- **Crafting panel** inside the inventory (`E`): planks, furnace, sword, pickaxe and iron tools
+- **Furnace**: place it, right-click to open — smelts sand into glass, ore into ingots, wood into charcoal (fuel: coal, planks, wood)
+- **Tools**: wooden sword and stone pickaxe (3x mining), iron ones are stronger (6x pickaxe, one-hit sword)
 - **Zombies** that chase the player; kill them with the sword
 - **Animals** (pig, cow, chicken) roam in daylight; they drop a healing heart when killed
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font

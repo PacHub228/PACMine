@@ -4,6 +4,8 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 
 > 🇷🇺 Версия на русском: [README.ru.md](README.ru.md)
 
+📖 **[Docs: dedicated server & Lua plugins](https://pachub228.github.io/PACMine/)**
+
 ## Features
 - Procedurally generated terrain (value-noise hills, trees, sand near water level)
 - First-person movement with gravity, jumping and AABB collision

@@ -4,6 +4,8 @@
 
 > 🇬🇧 English version: [README.md](README.md)
 
+📖 **[Документация: выделенный сервер и Lua-плагины](https://pachub228.github.io/PACMine/)**
+
 ---
 
 ## 📥 Скачать и играть

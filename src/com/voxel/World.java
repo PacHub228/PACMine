@@ -114,6 +114,9 @@ public class World {
 
     public static boolean isLiquid(byte b) { return b == WATER || b == LAVA; }
 
+    /** True for real diggable rock/dirt — anything a cave carve is allowed to hollow out. */
+    private static boolean isSolidGround(byte b) { return b != AIR && !isLiquid(b); }
+
     private static int localIdx(int lx, int y, int lz) { return (y * CHUNK + lz) * CHUNK + lx; }
     private static long key(int cx, int cz) { return (((long) cx) << 32) ^ (cz & 0xffffffffL); }
 
@@ -131,20 +134,23 @@ public class World {
         for (int x = 0; x < sx; x++)
             for (int z = 0; z < sz; z++)
                 genColumn(n, x, z, bedrock, 0, 0, null);
+        // caves first (so ore veins below never end up floating in open air)
+        carveCaves(rnd, 0, 0, sx, sz, 0, 0, null);
         // ore veins
         int area = sx * sz;
         for (int i = 0; i < Math.max(8, area / 12); i++) placeVein(rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);
         for (int i = 0; i < Math.max(3, area / 55); i++) placeVein(rnd, IRON, 3 + rnd.nextInt(4), 1, 16);
     }
 
-    /** Fill one infinite-world chunk (terrain + clipped trees + ores). */
+    /** Fill one infinite-world chunk (terrain + clipped trees, caves and ores). */
     private void fillChunk(int cx, int cz, byte[] c) {
         int bx0 = cx * CHUNK, bz0 = cz * CHUNK;
         for (int lx = 0; lx < CHUNK; lx++)
             for (int lz = 0; lz < CHUNK; lz++)
                 genColumn(noise, bx0 + lx, bz0 + lz, bedrockLayer, bx0, bz0, c);
-        // deterministic ores per chunk
+        // deterministic caves + ores per chunk
         java.util.Random rnd = new java.util.Random(seed ^ (key(cx, cz) * 0x9E3779B97F4A7C15L));
+        carveCaves(rnd, bx0, bz0, CHUNK, CHUNK, bx0, bz0, c);
         for (int i = 0; i < 3; i++) veinInChunk(c, rnd, COAL, 4 + rnd.nextInt(6), 4, SY - 6);
         if (rnd.nextDouble() < 0.8) veinInChunk(c, rnd, IRON, 3 + rnd.nextInt(4), 1, 16);
     }
@@ -223,6 +229,147 @@ public class World {
             switch (rnd.nextInt(6)) { case 0: lx++; break; case 1: lx--; break; case 2: y++; break; case 3: y--; break; case 4: lz++; break; case 5: lz--; break; }
             lx = Math.max(0, Math.min(CHUNK - 1, lx)); y = Math.max(yMin, Math.min(yMax, y)); lz = Math.max(0, Math.min(CHUNK - 1, lz));
         }
+    }
+
+    // ---- caves: winding wormlike tunnels, small and large, carved before ore veins ----
+    private static final int CAVE_Y_MIN = 3, CAVE_Y_MAX = 42;
+
+    /**
+     * Scatter cave worms across a region: mostly small winding tunnels, plus
+     * occasional bigger caverns. Counts scale with area so the same call
+     * works for one chunk (infinite worlds) or a whole finite map. Worms
+     * that wander outside the current chunk are clipped by put(), same as
+     * tree leaves near chunk edges.
+     */
+    private static final int CAVE_SURFACE_BUFFER = 5;   // min. solid blocks a cave must leave below the surface
+
+    private void carveCaves(java.util.Random rnd, int originX, int originZ, int spanX, int spanZ, int bx0, int bz0, byte[] c) {
+        // snapshot the terrain surface height (before any carving) so caves can
+        // keep a safe buffer below it — otherwise a cave passing close under a
+        // hill would hollow out the ground a tree (or grass) is resting on
+        int[][] surfaceY = new int[spanX][spanZ];
+        boolean[][] hasTree = new boolean[spanX][spanZ];
+        for (int lx = 0; lx < spanX; lx++)
+            for (int lz = 0; lz < spanZ; lz++) {
+                int y = SY - 1;
+                byte b;
+                boolean tree = false;
+                // skip air and tree parts: we want the ground height, not the treetop
+                do {
+                    b = getCol(originX + lx, y, originZ + lz, bx0, bz0, c);
+                    if (b == WOOD) tree = true;
+                    y--;
+                } while (y > 0 && (b == AIR || b == WOOD || b == LEAVES));
+                surfaceY[lx][lz] = y + 1;
+                hasTree[lx][lz] = tree;
+            }
+
+        int yRange = CAVE_Y_MAX - CAVE_Y_MIN;
+        int small = poissonish(rnd, spanX * spanZ / 280.0);
+        for (int i = 0; i < small; i++) {
+            int x = originX + rnd.nextInt(Math.max(1, spanX));
+            int z = originZ + rnd.nextInt(Math.max(1, spanZ));
+            int y = CAVE_Y_MIN + rnd.nextInt(yRange);
+            carveCaveWorm(rnd, x, y, z, 1.1 + rnd.nextDouble() * 1.1, 22 + rnd.nextInt(26), bx0, bz0, c, originX, originZ, surfaceY, hasTree);
+        }
+        int large = poissonish(rnd, spanX * spanZ / 1400.0);
+        for (int i = 0; i < large; i++) {
+            int x = originX + rnd.nextInt(Math.max(1, spanX));
+            int z = originZ + rnd.nextInt(Math.max(1, spanZ));
+            int y = CAVE_Y_MIN + rnd.nextInt(yRange);
+            carveCaveWorm(rnd, x, y, z, 2.6 + rnd.nextDouble() * 2.4, 7 + rnd.nextInt(9), bx0, bz0, c, originX, originZ, surfaceY, hasTree);
+        }
+        // a few deliberate surface entrances, so caves are actually findable while walking
+        // around (otherwise the surface buffer above hides every cave completely)
+        int entrances = poissonish(rnd, spanX * spanZ / 1800.0);
+        for (int i = 0; i < entrances; i++) {
+            int x = originX + rnd.nextInt(Math.max(1, spanX));
+            int z = originZ + rnd.nextInt(Math.max(1, spanZ));
+            carveSurfaceEntrance(rnd, x, z, bx0, bz0, c, originX, originZ, surfaceY, hasTree);
+        }
+    }
+
+    /** Fractional expected count -> an actual integer count (e.g. mean 0.3 -> 1 roughly 30% of the time). */
+    private static int poissonish(java.util.Random rnd, double mean) {
+        int whole = (int) mean;
+        return whole + (rnd.nextDouble() < mean - whole ? 1 : 0);
+    }
+
+    /** A worm walks in 3D, carving a blob at each step; direction wanders and radius breathes a little. */
+    private void carveCaveWorm(java.util.Random rnd, int x, int y, int z, double radius, int steps, int bx0, int bz0, byte[] c,
+                                int originX, int originZ, int[][] surfaceY, boolean[][] hasTree) {
+        double dx = rnd.nextDouble() * 2 - 1, dy = (rnd.nextDouble() * 2 - 1) * 0.3, dz = rnd.nextDouble() * 2 - 1;
+        double len = Math.sqrt(dx * dx + dy * dy + dz * dz); if (len < 1e-6) len = 1;
+        dx /= len; dy /= len; dz /= len;
+        double px = x, py = y, pz = z, r = radius;
+        for (int i = 0; i < steps; i++) {
+            carveCaveBlob(px, py, pz, r, bx0, bz0, c, originX, originZ, surfaceY, hasTree, CAVE_SURFACE_BUFFER);
+            dx += (rnd.nextDouble() * 2 - 1) * 0.35;
+            dy += (rnd.nextDouble() * 2 - 1) * 0.15;
+            dz += (rnd.nextDouble() * 2 - 1) * 0.35;
+            double l = Math.sqrt(dx * dx + dy * dy + dz * dz); if (l < 1e-6) l = 1;
+            dx /= l; dy /= l; dz /= l;
+            px += dx * 1.4; py += dy * 1.4; pz += dz * 1.4;
+            r += (rnd.nextDouble() - 0.5) * 0.6;
+            if (r < 0.8) r = 0.8;
+            if (r > radius * 1.6) r = radius * 1.6;
+            if (py < CAVE_Y_MIN || py > CAVE_Y_MAX) break;     // wandered out of the cave band
+        }
+    }
+
+    /**
+     * A deliberate cave mouth: starts right at the surface (skipping the usual
+     * buffer for its own column) and dives down into the ground, so caves are
+     * actually findable by walking around a hillside instead of only by luck.
+     */
+    private void carveSurfaceEntrance(java.util.Random rnd, int x, int z, int bx0, int bz0, byte[] c,
+                                       int originX, int originZ, int[][] surfaceY, boolean[][] hasTree) {
+        int lx = Math.max(0, Math.min(surfaceY.length - 1, x - originX));
+        int lz = Math.max(0, Math.min(surfaceY[0].length - 1, z - originZ));
+        int groundY = surfaceY[lx][lz];
+        byte ground = getCol(x, groundY, z, bx0, bz0, c);
+        if (ground == BEDROCK || ground == AIR || isLiquid(ground) || groundY < CAVE_Y_MIN + 6) return;
+
+        double dx = rnd.nextDouble() * 2 - 1, dz = rnd.nextDouble() * 2 - 1, dy = -0.8;
+        double len = Math.sqrt(dx * dx + dy * dy + dz * dz); dx /= len; dy /= len; dz /= len;
+        double px = x, py = groundY, pz = z, r = 1.4 + rnd.nextDouble() * 0.8;
+        int steps = 8 + rnd.nextInt(8);
+        for (int i = 0; i < steps; i++) {
+            carveCaveBlob(px, py, pz, r, bx0, bz0, c, originX, originZ, surfaceY, hasTree, 0);   // no buffer: this IS the opening
+            dx += (rnd.nextDouble() * 2 - 1) * 0.3;
+            dy += (rnd.nextDouble() * 2 - 1) * 0.2;
+            dz += (rnd.nextDouble() * 2 - 1) * 0.3;
+            if (dy > -0.15) dy = -0.15;                        // keep diving inward, don't curl back up
+            double l = Math.sqrt(dx * dx + dy * dy + dz * dz); dx /= l; dy /= l; dz /= l;
+            px += dx * 1.3; py += dy * 1.3; pz += dz * 1.3;
+            r += (rnd.nextDouble() - 0.5) * 0.4;
+            if (r < 1.0) r = 1.0;
+            if (r > 2.6) r = 2.6;
+            if (py < CAVE_Y_MIN) break;
+        }
+    }
+
+    /** Carve a squashed sphere of air, radius r, centred at (cx,cy,cz). Never touches bedrock, liquids,
+     *  or (beyond `buffer` blocks of slack) the ground above the pre-carve surface. */
+    private void carveCaveBlob(double cx, double cy, double cz, double r, int bx0, int bz0, byte[] c,
+                                int originX, int originZ, int[][] surfaceY, boolean[][] hasTree, int buffer) {
+        int r0 = (int) Math.ceil(r);
+        int ix = (int) Math.round(cx), iy = (int) Math.round(cy), iz = (int) Math.round(cz);
+        for (int dx = -r0; dx <= r0; dx++)
+            for (int dy = -r0; dy <= r0; dy++)
+                for (int dz = -r0; dz <= r0; dz++) {
+                    double dist = Math.sqrt(dx * dx + (dy * 1.3) * (dy * 1.3) + dz * dz);
+                    if (dist > r) continue;
+                    int wx = ix + dx, wy = iy + dy, wz = iz + dz;
+                    if (wy < 1 || wy >= SY - 1) continue;      // keep the bedrock/top layers intact
+                    int lx = Math.max(0, Math.min(surfaceY.length - 1, wx - originX));
+                    int lz = Math.max(0, Math.min(surfaceY[0].length - 1, wz - originZ));
+                    int effBuffer = hasTree[lx][lz] ? Math.max(buffer, CAVE_SURFACE_BUFFER) : buffer;   // never undermine a tree
+                    if (wy > surfaceY[lx][lz] - effBuffer) continue;
+                    byte cur = getCol(wx, wy, wz, bx0, bz0, c);
+                    if (cur == BEDROCK || !isSolidGround(cur)) continue;   // protect bedrock, skip existing air/liquid
+                    put(wx, wy, wz, AIR, bx0, bz0, c);
+                }
     }
 
     /**

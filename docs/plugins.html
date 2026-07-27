@@ -18,14 +18,22 @@
 </div></header>
 
 <div class="wrap">
-  <div class="badge">чистый Lua, встроенный интерпретатор (LuaJ)</div>
-  <h1>Lua-<span class="accent">плагины</span></h1>
-  <p class="lead">
-    Выделенный сервер можно расширять скриптами на Lua: NPC, автоответчики, мини-игры, кастомные команды —
-    всё через один глобальный стол <code>pacmine</code>.
-  </p>
+  <div class="hero">
+    <div class="hero-box">
+      <div class="chips">
+        <span class="chip">lua</span>
+        <span class="chip">luaj</span>
+        <span class="chip">pacmine.*</span>
+      </div>
+      <h1>Lua-<span class="accent">плагины</span></h1>
+      <p class="lead">
+        Выделенный сервер можно расширять скриптами на Lua: NPC, автоответчики, мини-игры, кастомные команды —
+        всё через один глобальный стол <code>pacmine</code>.
+      </p>
+    </div>
+  </div>
 
-  <h2>Как включить</h2>
+  <h2><span class="ic">▶</span>Как включить</h2>
   <ol>
     <li>В <code>server.properties</code> поставь <code>plugins=true</code></li>
     <li>Запусти сервер — он создаст папку <code>plugins/</code> с этой же документацией внутри (<code>README.txt</code>)</li>
@@ -37,7 +45,7 @@
   </div>
   <p>Ошибка в одном плагине не роняет сервер — она просто пишется в лог, и сервер работает дальше.</p>
 
-  <h2>Справочник <code>pacmine.*</code></h2>
+  <h2><span class="ic">📖</span>Справочник <code>pacmine.*</code></h2>
 
   <h3>Основное</h3>
   <table>
@@ -91,7 +99,7 @@
     <tr><td><code>7</code></td><td>бедрок</td><td><code>16</code></td><td>железный слиток (предмет, не ставится)</td></tr>
   </table>
 
-  <h2>Примеры</h2>
+  <h2><span class="ic">✨</span>Примеры</h2>
 
   <h3>Приветствие при входе</h3>
   <pre><code>pacmine.on("join", function(name, premium)
@@ -126,7 +134,7 @@ end)</code></pre>
 end)</code></pre>
 
   <p style="margin-top:36px">
-    См. также: <a href="server.html">настройка сервера</a> — как включить <code>plugins=true</code>
+    См. также: <a class="link" href="server.html">настройка сервера</a> — как включить <code>plugins=true</code>
     и что ещё есть в <code>server.properties</code>.
   </p>
 </div>

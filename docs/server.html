@@ -18,15 +18,23 @@
 </div></header>
 
 <div class="wrap">
-  <div class="badge">ядро без LWJGL — работает на любом VPS</div>
-  <h1>Выделенный <span class="accent">сервер</span></h1>
-  <p class="lead">
-    Как в Minecraft: одна папка, один jar, всё остальное создаётся само при первом запуске.
-  </p>
+  <div class="hero">
+    <div class="hero-box">
+      <div class="chips">
+        <span class="chip">headless</span>
+        <span class="chip">без lwjgl</span>
+        <span class="chip">любой vps</span>
+      </div>
+      <h1>Выделенный <span class="accent">сервер</span></h1>
+      <p class="lead">
+        Как в Minecraft: одна папка, один jar, всё остальное создаётся само при первом запуске.
+      </p>
+    </div>
+  </div>
 
-  <h2>Запуск</h2>
+  <h2><span class="ic">▶</span>Запуск</h2>
   <ol>
-    <li>Скачай <code>PACMine-Server.jar</code> со <a href="https://github.com/PacHub228/PACMine/releases" target="_blank">страницы релизов</a>
+    <li>Скачай <code>PACMine-Server.jar</code> со <a class="link" href="https://github.com/PacHub228/PACMine/releases" target="_blank">страницы релизов</a>
       (или собери сам: <code>bash make-server.sh</code>)</li>
     <li>Положи файл в пустую папку</li>
     <li>Запусти:
@@ -40,11 +48,11 @@
     <tr><td><code>saves/&lt;world-name&gt;.pms</code></td><td>мир: автосохранение + сохранение при <code>stop</code></td></tr>
     <tr><td><code>players.dat</code></td><td>последняя позиция каждого игрока — при заходе тебя вернёт туда, где вышел</td></tr>
     <tr><td><code>server.log</code></td><td>полный лог консоли с таймстампами</td></tr>
-    <tr><td><code>plugins/</code></td><td>Lua-плагины — только если включено, см. <a href="plugins.html">страницу плагинов</a></td></tr>
+    <tr><td><code>plugins/</code></td><td>Lua-плагины — только если включено, см. <a class="link" href="plugins.html">страницу плагинов</a></td></tr>
   </table>
   <div class="note">Java нужна любая современная (JDK 17+). LWJGL ядру не требуется — можно ставить на голый VPS без графики.</div>
 
-  <h2>server.properties</h2>
+  <h2><span class="ic">⚙</span>server.properties</h2>
   <table>
     <tr><th>Ключ</th><th>По умолчанию</th><th>Что делает</th></tr>
     <tr><td><code>port</code></td><td><code>25565</code></td><td>TCP-порт, на который подключаются игроки</td></tr>
@@ -57,7 +65,7 @@
     <tr><td><code>plugins</code></td><td><code>false</code></td><td>грузить ли Lua-плагины из <code>plugins/</code></td></tr>
   </table>
 
-  <h2>Бесконечные миры</h2>
+  <h2><span class="ic">🌐</span>Бесконечные миры</h2>
   <p>
     Поставь <code>infinite=true</code> — сервер сразу предгенерирует квадрат
     <code>pregen-chunks</code>&nbsp;×&nbsp;<code>pregen-chunks</code> чанков вокруг спавна (по умолчанию 250×250,
@@ -73,7 +81,7 @@
     старые версии игры не поймут новый тип пакета мира.
   </div>
 
-  <h2>Консоль</h2>
+  <h2><span class="ic">📟</span>Консоль</h2>
   <table>
     <tr><th>Команда</th><th>Действие</th></tr>
     <tr><td><code>list</code></td><td>кто сейчас онлайн</td></tr>
@@ -84,7 +92,7 @@
     <tr><td><code>help</code></td><td>показать этот список</td></tr>
   </table>
 
-  <h2>Подключение игроков</h2>
+  <h2><span class="ic">🔗</span>Подключение игроков</h2>
   <p>
     В игре: <b>МУЛЬТИПЛЕЕР → JOIN GAME</b>, ввести IP (или <code>localhost</code> для локального сервера).
     Консоль сервера покажет статус лицензии при входе каждого игрока:
@@ -96,7 +104,7 @@
     <b>CONNECTION LOST</b>, а не оставляет висеть в замороженном мире.
   </p>
 
-  <h2>Формат сохранений</h2>
+  <h2><span class="ic">💾</span>Формат сохранений</h2>
   <p>
     Мир хранится в собственном шифрованном формате <code>.pms</code> (PAC Mine Saves): блоки, инвентарь по слотам,
     зомби (тип и здоровье), животные, дроп на земле, содержимое печек, время суток, прогресс волн Super-режима.

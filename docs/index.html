@@ -18,41 +18,50 @@
 </div></header>
 
 <div class="wrap">
-  <div class="badge">воксельная песочница на Java</div>
-  <h1>Документация <span class="accent">PACMine</span></h1>
-  <p class="lead">Игра, лаунчер, выделенный сервер и Lua-плагины — всё, что нужно, чтобы играть, хостить и расширять.</p>
+  <div class="hero">
+    <div class="hero-box">
+      <div class="chips">
+        <span class="chip">java</span>
+        <span class="chip">lwjgl</span>
+        <span class="chip">сервер + lua</span>
+      </div>
+      <h1>Документация <span class="accent">PACMine</span></h1>
+      <p class="lead">Игра, лаунчер, выделенный сервер и Lua-плагины — всё, что нужно, чтобы играть, хостить и расширять.</p>
+      <div class="btn-row">
+        <a class="btn btn-pri" href="https://github.com/PacHub228/PACMine/releases" target="_blank">⬇ Скачать лаунчер</a>
+        <a class="btn btn-ton" href="https://github.com/PacHub228/PACMine" target="_blank">Исходники на GitHub</a>
+        <a class="btn btn-ton" href="server.html">Поднять сервер</a>
+      </div>
+    </div>
+  </div>
 
+  <h2><span class="ic">🧭</span>Разделы</h2>
   <div class="grid">
-    <a class="tile" href="server.html">
+    <a class="tile t-primary" href="server.html">
       <h3>🖥️ Выделенный сервер</h3>
       <p>Ядро в стиле майна: скачал jar, положил в папку, запустил. Настройки, бесконечные миры, консоль.</p>
     </a>
-    <a class="tile" href="plugins.html">
+    <a class="tile t-secondary" href="plugins.html">
       <h3>🔌 Lua-плагины</h3>
       <p>Полный справочник API <code>pacmine.*</code>: события, блоки, NPC, чат — с примерами.</p>
     </a>
-    <a class="tile" href="https://github.com/PacHub228/PACMine/releases" target="_blank">
+    <a class="tile t-tertiary" href="https://github.com/PacHub228/PACMine/releases" target="_blank">
       <h3>⬇️ Скачать</h3>
       <p>Лаунчер и серверное ядро — последние релизы на GitHub, с автообновлением.</p>
     </a>
   </div>
 
-  <h2>Что такое PACMine</h2>
+  <h2><span class="ic">💎</span>Что такое PACMine</h2>
   <p>
     Небольшая воксельная песочница на Java с LWJGL (OpenGL + GLFW): генерация мира с пещерами и рудой,
     добыча и крафт, печки и плавка, зомби и животные, вода и лава с настоящей физикой растекания,
     мультиплеер и достижения.
   </p>
-  <div class="btn-row">
-    <a class="btn primary" href="https://github.com/PacHub228/PACMine/releases" target="_blank">⬇ Скачать лаунчер</a>
-    <a class="btn ghost" href="https://github.com/PacHub228/PACMine" target="_blank">Исходники на GitHub</a>
-    <a class="btn ghost" href="server.html">Поднять сервер</a>
-  </div>
 
-  <h2>С чего начать</h2>
+  <h2><span class="ic">🚀</span>С чего начать</h2>
   <div class="grid two">
     <div class="card">
-      <h3 style="margin-top:0">Просто поиграть</h3>
+      <h3>Просто поиграть</h3>
       <ol>
         <li>Скачай <code>PACMine-Launcher.jar</code> со страницы релизов</li>
         <li><code>java -jar PACMine-Launcher.jar</code></li>
@@ -60,16 +69,16 @@
       </ol>
     </div>
     <div class="card">
-      <h3 style="margin-top:0">Поднять свой сервер</h3>
+      <h3>Поднять свой сервер</h3>
       <ol>
         <li>Скачай <code>PACMine-Server.jar</code></li>
         <li>Положи в пустую папку, запусти</li>
-        <li>Подробности — на <a href="server.html">странице сервера</a></li>
+        <li>Подробности — на <a class="link" href="server.html">странице сервера</a></li>
       </ol>
     </div>
   </div>
 
-  <h2>Формат сохранений</h2>
+  <h2><span class="ic">💾</span>Формат сохранений</h2>
   <p>
     Миры хранятся в собственном шифрованном формате <code>.pms</code> (PAC Mine Saves) — блоки, инвентарь,
     зомби, животные, дроп, печки, время суток. Достижения — в <code>.pma</code>. Оба формата зашифрованы

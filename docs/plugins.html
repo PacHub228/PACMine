@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACMine — Lua-плагины</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="hrow">
+  <div class="logo"><span class="px"></span>PACMINE</div>
+  <nav>
+    <a href="index.html">Обзор</a>
+    <a href="server.html">Сервер</a>
+    <a href="plugins.html" class="active">Плагины</a>
+    <a href="https://github.com/PacHub228/PACMine" target="_blank">GitHub</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+  <div class="badge">чистый Lua, встроенный интерпретатор (LuaJ)</div>
+  <h1>Lua-<span class="accent">плагины</span></h1>
+  <p class="lead">
+    Выделенный сервер можно расширять скриптами на Lua: NPC, автоответчики, мини-игры, кастомные команды —
+    всё через один глобальный стол <code>pacmine</code>.
+  </p>
+
+  <h2>Как включить</h2>
+  <ol>
+    <li>В <code>server.properties</code> поставь <code>plugins=true</code></li>
+    <li>Запусти сервер — он создаст папку <code>plugins/</code> с этой же документацией внутри (<code>README.txt</code>)</li>
+    <li>Положи в неё <code>.lua</code>-файлы — они грузятся по алфавиту при старте</li>
+  </ol>
+  <div class="note">
+    Только исходный текст Lua. Скомпилированный байткод <code>.luac</code> отклоняется — проверка идёт
+    не по расширению файла, а по сигнатуре <code>\x1bLua</code> в начале, так что просто переименовать не получится.
+  </div>
+  <p>Ошибка в одном плагине не роняет сервер — она просто пишется в лог, и сервер работает дальше.</p>
+
+  <h2>Справочник <code>pacmine.*</code></h2>
+
+  <h3>Основное</h3>
+  <table>
+    <tr><th>Функция</th><th>Описание</th></tr>
+    <tr><td><code>pacmine.log(msg)</code></td><td>напечатать строку в консоль/<code>server.log</code> с префиксом <code>[plugin]</code></td></tr>
+    <tr><td><code>pacmine.say(from, text)</code></td><td>отправить сообщение в чат всем игрокам от произвольного имени</td></tr>
+    <tr><td><code>pacmine.players()</code></td><td>таблица имён всех игроков онлайн</td></tr>
+    <tr><td><code>pacmine.kick(name)</code></td><td>отключить игрока по нику, вернёт <code>true</code>/<code>false</code></td></tr>
+    <tr><td><code>pacmine.seed()</code></td><td>сид мира</td></tr>
+    <tr><td><code>pacmine.is_infinite()</code></td><td>бесконечный ли мир</td></tr>
+  </table>
+
+  <h3>События — <code>pacmine.on(event, fn)</code></h3>
+  <table>
+    <tr><th>Событие</th><th>Аргументы функции</th><th>Когда срабатывает</th></tr>
+    <tr><td><code>"join"</code></td><td><code>name, premium, licensed</code></td><td>игрok зашёл на сервер</td></tr>
+    <tr><td><code>"leave"</code></td><td><code>name</code></td><td>игрок вышел</td></tr>
+    <tr><td><code>"block"</code></td><td><code>x, y, z, id</code></td><td>игрок сломал/поставил блок</td></tr>
+    <tr><td><code>"chat"</code></td><td><code>name, text</code></td><td>сообщение в чате от игрока</td></tr>
+    <tr><td><code>"tick"</code></td><td><code>seconds</code></td><td>раз в секунду, с момента старта сервера</td></tr>
+  </table>
+
+  <h3>Мир и блоки</h3>
+  <table>
+    <tr><th>Функция</th><th>Описание</th></tr>
+    <tr><td><code>pacmine.get_block(x, y, z)</code></td><td>id блока в указанных координатах</td></tr>
+    <tr><td><code>pacmine.set_block(x, y, z, id)</code></td><td>поставить блок; синхронизируется всем клиентам сразу</td></tr>
+    <tr><td><code>pacmine.surface_y(x, z)</code></td><td>высота поверхности в этой колонке (первый твёрдый блок сверху + 1)</td></tr>
+  </table>
+
+  <h3>NPC</h3>
+  <p>NPC выглядят для клиентов как обычные игроки — с телом и ником над головой.</p>
+  <table>
+    <tr><th>Функция</th><th>Описание</th></tr>
+    <tr><td><code>pacmine.spawn_npc(name, x, y, z)</code></td><td>создать NPC, вернёт его id</td></tr>
+    <tr><td><code>pacmine.move_npc(id, x, y, z [, yaw])</code></td><td>переместить NPC, вернёт <code>true</code>/<code>false</code></td></tr>
+    <tr><td><code>pacmine.remove_npc(id)</code></td><td>убрать NPC, вернёт <code>true</code>/<code>false</code></td></tr>
+    <tr><td><code>pacmine.player_pos(name)</code></td><td>таблица <code>{x=, y=, z=}</code> или <code>nil</code>, если игрока нет онлайн</td></tr>
+  </table>
+
+  <h3>Id блоков</h3>
+  <table>
+    <tr><th>Id</th><th>Блок</th><th>Id</th><th>Блок</th></tr>
+    <tr><td><code>0</code></td><td>воздух</td><td><code>8</code></td><td>уголь</td></tr>
+    <tr><td><code>1</code></td><td>трава</td><td><code>9</code></td><td>железо</td></tr>
+    <tr><td><code>2</code></td><td>земля</td><td><code>10</code></td><td>вода</td></tr>
+    <tr><td><code>3</code></td><td>камень</td><td><code>11</code></td><td>лава</td></tr>
+    <tr><td><code>4</code></td><td>дерево</td><td><code>12</code></td><td>доски</td></tr>
+    <tr><td><code>5</code></td><td>листва</td><td><code>13</code></td><td>печка</td></tr>
+    <tr><td><code>6</code></td><td>песок</td><td><code>14</code></td><td>стекло</td></tr>
+    <tr><td><code>7</code></td><td>бедрок</td><td><code>16</code></td><td>железный слиток (предмет, не ставится)</td></tr>
+  </table>
+
+  <h2>Примеры</h2>
+
+  <h3>Приветствие при входе</h3>
+  <pre><code>pacmine.on("join", function(name, premium)
+    pacmine.log("Welcome, " .. name .. (premium and " *" or ""))
+end)</code></pre>
+
+  <h3>NPC-страж на спавне, который патрулирует и здоровается</h3>
+  <pre><code>local bot = nil
+local CX, CZ = 56.5, 56.5
+
+pacmine.on("tick", function(sec)
+    if bot == nil then
+        local y = pacmine.surface_y(CX, CZ)
+        bot = pacmine.spawn_npc("PacBot", CX, y, CZ)
+    else
+        local a = sec * 0.5
+        local x = CX + math.cos(a) * 5
+        local z = CZ + math.sin(a) * 5
+        pacmine.move_npc(bot, x, pacmine.surface_y(x, z), z, math.deg(a) + 90)
+    end
+end)
+
+pacmine.on("join", function(name)
+    pacmine.say("PacBot", "Добро пожаловать, " .. name .. "!")
+end)</code></pre>
+
+  <h3>Чат-бот, отвечающий на ключевое слово</h3>
+  <pre><code>pacmine.on("chat", function(name, text)
+    if text == "hello" then
+        pacmine.say("Parrot", "hello " .. name .. "!")
+    end
+end)</code></pre>
+
+  <p style="margin-top:36px">
+    См. также: <a href="server.html">настройка сервера</a> — как включить <code>plugins=true</code>
+    и что ещё есть в <code>server.properties</code>.
+  </p>
+</div>
+
+<footer>PACMine — by PACHUB / PACPERLAR · <a href="https://github.com/PacHub228/PACMine/blob/main/LICENSE">Apache 2.0</a></footer>
+</body>
+</html>

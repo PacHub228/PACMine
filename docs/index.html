@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACMine — документация</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="hrow">
+  <div class="logo"><span class="px"></span>PACMINE</div>
+  <nav>
+    <a href="index.html" class="active">Обзор</a>
+    <a href="server.html">Сервер</a>
+    <a href="plugins.html">Плагины</a>
+    <a href="https://github.com/PacHub228/PACMine" target="_blank">GitHub</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+  <div class="badge">воксельная песочница на Java</div>
+  <h1>Документация <span class="accent">PACMine</span></h1>
+  <p class="lead">Игра, лаунчер, выделенный сервер и Lua-плагины — всё, что нужно, чтобы играть, хостить и расширять.</p>
+
+  <div class="grid">
+    <a class="tile" href="server.html">
+      <h3>🖥️ Выделенный сервер</h3>
+      <p>Ядро в стиле майна: скачал jar, положил в папку, запустил. Настройки, бесконечные миры, консоль.</p>
+    </a>
+    <a class="tile" href="plugins.html">
+      <h3>🔌 Lua-плагины</h3>
+      <p>Полный справочник API <code>pacmine.*</code>: события, блоки, NPC, чат — с примерами.</p>
+    </a>
+    <a class="tile" href="https://github.com/PacHub228/PACMine/releases" target="_blank">
+      <h3>⬇️ Скачать</h3>
+      <p>Лаунчер и серверное ядро — последние релизы на GitHub, с автообновлением.</p>
+    </a>
+  </div>
+
+  <h2>Что такое PACMine</h2>
+  <p>
+    Небольшая воксельная песочница на Java с LWJGL (OpenGL + GLFW): генерация мира с пещерами и рудой,
+    добыча и крафт, печки и плавка, зомби и животные, вода и лава с настоящей физикой растекания,
+    мультиплеер и достижения.
+  </p>
+  <div class="btn-row">
+    <a class="btn primary" href="https://github.com/PacHub228/PACMine/releases" target="_blank">⬇ Скачать лаунчер</a>
+    <a class="btn ghost" href="https://github.com/PacHub228/PACMine" target="_blank">Исходники на GitHub</a>
+    <a class="btn ghost" href="server.html">Поднять сервер</a>
+  </div>
+
+  <h2>С чего начать</h2>
+  <div class="grid two">
+    <div class="card">
+      <h3 style="margin-top:0">Просто поиграть</h3>
+      <ol>
+        <li>Скачай <code>PACMine-Launcher.jar</code> со страницы релизов</li>
+        <li><code>java -jar PACMine-Launcher.jar</code></li>
+        <li>Лаунчер сам скачает и соберёт игру</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Поднять свой сервер</h3>
+      <ol>
+        <li>Скачай <code>PACMine-Server.jar</code></li>
+        <li>Положи в пустую папку, запусти</li>
+        <li>Подробности — на <a href="server.html">странице сервера</a></li>
+      </ol>
+    </div>
+  </div>
+
+  <h2>Формат сохранений</h2>
+  <p>
+    Миры хранятся в собственном шифрованном формате <code>.pms</code> (PAC Mine Saves) — блоки, инвентарь,
+    зомби, животные, дроп, печки, время суток. Достижения — в <code>.pma</code>. Оба формата зашифрованы
+    (<code>PMCrypt</code>), чтобы сейвы нельзя было небрежно поправить в текстовом редакторе.
+  </p>
+</div>
+
+<footer>PACMine — by PACHUB / PACPERLAR · <a href="https://github.com/PacHub228/PACMine/blob/main/LICENSE">Apache 2.0</a></footer>
+</body>
+</html>

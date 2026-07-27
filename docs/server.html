@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACMine — выделенный сервер</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><div class="hrow">
+  <div class="logo"><span class="px"></span>PACMINE</div>
+  <nav>
+    <a href="index.html">Обзор</a>
+    <a href="server.html" class="active">Сервер</a>
+    <a href="plugins.html">Плагины</a>
+    <a href="https://github.com/PacHub228/PACMine" target="_blank">GitHub</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+  <div class="badge">ядро без LWJGL — работает на любом VPS</div>
+  <h1>Выделенный <span class="accent">сервер</span></h1>
+  <p class="lead">
+    Как в Minecraft: одна папка, один jar, всё остальное создаётся само при первом запуске.
+  </p>
+
+  <h2>Запуск</h2>
+  <ol>
+    <li>Скачай <code>PACMine-Server.jar</code> со <a href="https://github.com/PacHub228/PACMine/releases" target="_blank">страницы релизов</a>
+      (или собери сам: <code>bash make-server.sh</code>)</li>
+    <li>Положи файл в пустую папку</li>
+    <li>Запусти:
+      <pre><code>java -jar PACMine-Server.jar</code></pre>
+    </li>
+  </ol>
+  <p>При первом запуске ядро создаёт в этой же папке:</p>
+  <table>
+    <tr><th>Файл</th><th>Назначение</th></tr>
+    <tr><td><code>server.properties</code></td><td>настройки сервера, с комментариями</td></tr>
+    <tr><td><code>saves/&lt;world-name&gt;.pms</code></td><td>мир: автосохранение + сохранение при <code>stop</code></td></tr>
+    <tr><td><code>players.dat</code></td><td>последняя позиция каждого игрока — при заходе тебя вернёт туда, где вышел</td></tr>
+    <tr><td><code>server.log</code></td><td>полный лог консоли с таймстампами</td></tr>
+    <tr><td><code>plugins/</code></td><td>Lua-плагины — только если включено, см. <a href="plugins.html">страницу плагинов</a></td></tr>
+  </table>
+  <div class="note">Java нужна любая современная (JDK 17+). LWJGL ядру не требуется — можно ставить на голый VPS без графики.</div>
+
+  <h2>server.properties</h2>
+  <table>
+    <tr><th>Ключ</th><th>По умолчанию</th><th>Что делает</th></tr>
+    <tr><td><code>port</code></td><td><code>25565</code></td><td>TCP-порт, на который подключаются игроки</td></tr>
+    <tr><td><code>world-size</code></td><td><code>8</code></td><td>размер нового мира в чанках (2–24), для конечных (не бесконечных) миров</td></tr>
+    <tr><td><code>infinite</code></td><td><code>false</code></td><td>бесконечный мир — см. раздел ниже</td></tr>
+    <tr><td><code>pregen-chunks</code></td><td><code>250</code></td><td>сколько чанков (сторона квадрата) предгенерировать при <code>infinite=true</code>; 250 требует ~1.5 ГБ хипа</td></tr>
+    <tr><td><code>protection</code></td><td><code>true</code></td><td>бедрок снизу и невидимые стены по краям конечного мира</td></tr>
+    <tr><td><code>world-name</code></td><td><code>world</code></td><td>имя файла мира внутри <code>saves/</code></td></tr>
+    <tr><td><code>autosave-seconds</code></td><td><code>120</code></td><td>как часто мир пишется на диск</td></tr>
+    <tr><td><code>plugins</code></td><td><code>false</code></td><td>грузить ли Lua-плагины из <code>plugins/</code></td></tr>
+  </table>
+
+  <h2>Бесконечные миры</h2>
+  <p>
+    Поставь <code>infinite=true</code> — сервер сразу предгенерирует квадрат
+    <code>pregen-chunks</code>&nbsp;×&nbsp;<code>pregen-chunks</code> чанков вокруг спавна (по умолчанию 250×250,
+    с прогрессом в консоли), а всё, что дальше, достраивается на лету по мере того, как игроки туда доходят.
+  </p>
+  <p>
+    Клиентам при подключении не передаётся весь мир целиком — только <b>сид и список изменённых чанков</b>.
+    Игра на клиенте генерирует нетронутый рельеф локально (генерация детерминирована от сида), поэтому заход
+    на сервер мгновенный даже с полностью предгенерированным миром.
+  </p>
+  <div class="note">
+    ⚠️ На бесконечные сервера могут заходить только клиенты той же версии протокола (0.1.5+) —
+    старые версии игры не поймут новый тип пакета мира.
+  </div>
+
+  <h2>Консоль</h2>
+  <table>
+    <tr><th>Команда</th><th>Действие</th></tr>
+    <tr><td><code>list</code></td><td>кто сейчас онлайн</td></tr>
+    <tr><td><code>say &lt;текст&gt;</code></td><td>сообщение в чат от имени <code>[Server]</code></td></tr>
+    <tr><td><code>plugins</code></td><td>список загруженных плагинов</td></tr>
+    <tr><td><code>save</code></td><td>сохранить мир прямо сейчас</td></tr>
+    <tr><td><code>stop</code></td><td>сохранить мир и выключить сервер</td></tr>
+    <tr><td><code>help</code></td><td>показать этот список</td></tr>
+  </table>
+
+  <h2>Подключение игроков</h2>
+  <p>
+    В игре: <b>МУЛЬТИПЛЕЕР → JOIN GAME</b>, ввести IP (или <code>localhost</code> для локального сервера).
+    Консоль сервера покажет статус лицензии при входе каждого игрока:
+  </p>
+  <pre><code>+ Wanderer joined [license: PREMIUM]
++ Guest42 joined [no license (guest)]</code></pre>
+  <p>
+    Если сервер упал или его выключили — клиента аккуратно выкидывает в главное меню с надписью
+    <b>CONNECTION LOST</b>, а не оставляет висеть в замороженном мире.
+  </p>
+
+  <h2>Формат сохранений</h2>
+  <p>
+    Мир хранится в собственном шифрованном формате <code>.pms</code> (PAC Mine Saves): блоки, инвентарь по слотам,
+    зомби (тип и здоровье), животные, дроп на земле, содержимое печек, время суток, прогресс волн Super-режима.
+    Файл зашифрован (<code>PMC1</code> + XOR-поток) — это защита от казуального редактирования в текстовом
+    редакторе, не криптостойкое шифрование. Старые версии формата читаются и конвертируются автоматически.
+  </p>
+</div>
+
+<footer>PACMine — by PACHUB / PACPERLAR · <a href="https://github.com/PacHub228/PACMine/blob/main/LICENSE">Apache 2.0</a></footer>
+</body>
+</html>

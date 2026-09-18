@@ -14,7 +14,7 @@ import java.util.*;
  * bytecode is rejected). Each plugin gets a global `pacmine` table:
  *
  *   pacmine.log(msg)                      print to the server console/log
- *   pacmine.on(event, fn)                 subscribe: "join"  fn(name, premium, licensed)
+ *   pacmine.on(event, fn)                 subscribe: "join"  fn(name)
  *                                                    "leave" fn(name)
  *                                                    "block" fn(x, y, z, id)
  *                                                    "tick"  fn(seconds)
@@ -59,7 +59,7 @@ public class PluginManager {
                     logger.log("Plugin " + f.getName() + " SKIPPED: compiled .luac bytecode is not allowed");
                     continue;
                 }
-                Globals g = JsePlatform.standardGlobals();
+                Globals g = sandboxedGlobals();
                 g.set("pacmine", api());
                 g.loadfile(f.getPath()).call();
                 loaded.add(f.getName());
@@ -69,6 +69,18 @@ public class PluginManager {
             }
         }
         if (loaded.isEmpty()) logger.log("No plugins found in plugins/");
+    }
+
+    /**
+     * Plugins are game scripts, not server administration programs.  LuaJ's
+     * JSE globals expose the host file system and process helpers, so remove
+     * every host-facing entry point before executing a plugin.
+     */
+    private static Globals sandboxedGlobals() {
+        Globals g = JsePlatform.standardGlobals();
+        for (String name : new String[]{"io", "os", "package", "luajava", "debug", "require", "dofile", "loadfile"})
+            g.set(name, LuaValue.NIL);
+        return g;
     }
 
     /** Fire an event into every subscribed plugin handler. */
@@ -177,7 +189,7 @@ public class PluginManager {
                 Every plugin gets the global `pacmine` table:
 
                   pacmine.log(msg)                -- print to console/server.log
-                  pacmine.on("join",  function(name, premium, licensed) ... end)
+                  pacmine.on("join",  function(name) ... end)
                   pacmine.on("leave", function(name) ... end)
                   pacmine.on("block", function(x, y, z, id) ... end)   -- block changed by a player
                   pacmine.on("chat",  function(name, text) ... end)    -- player chat message
@@ -201,8 +213,8 @@ public class PluginManager {
                            13 furnace, 14 glass; items: 16 iron ingot.
 
                 Example (welcome.lua):
-                  pacmine.on("join", function(name, premium)
-                      pacmine.log("Welcome, " .. name .. (premium and " *" or ""))
+                  pacmine.on("join", function(name)
+                      pacmine.log("Welcome, " .. name)
                   end)
                 """);
         } catch (Exception ignored) {}

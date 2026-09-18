@@ -18,10 +18,11 @@ import java.util.zip.ZipFile;
  * Supports version selection, update checking, a build log and saved settings.
  */
 public class LauncherMain {
+    static final long MAX_ARCHIVE_BYTES = 250L * 1024 * 1024;
+    static final int MAX_ARCHIVE_ENTRIES = 10_000;
     static final String REPO = "PacHub228/PACMine";
-    static final String GV_API = "https://gitverse.ru/api/repos/PacPerlar/PacMine";   // RU mirror
+    static final String GV_API = "https://gitverse.ru/api/repos/PacPerlar/PacMine";   // archive for older releases
     static final String MESA_ZIP = "https://raw.githubusercontent.com/PacHub228/PACMine/mesa/mesa-win.zip";
-    static final String BACKEND = "http://185.218.137.116";
     static final Path HOME    = Paths.get(System.getProperty("user.home"), ".pacmine");
     static final Path GAMEDIR = HOME.resolve("PACMine");
     static final Path CFG     = HOME.resolve("launcher.properties");
@@ -36,7 +37,7 @@ public class LauncherMain {
 
     static JLabel status, versionInfo, account;
     static JProgressBar bar;
-    static JButton play, update, openFolder, loginBtn, guestBtn;
+    static JButton play, update, openFolder, nickBtn;
     static JComboBox<String> versionBox, mirrorBox;
     static JCheckBox swGl, devBox;
     static JTextArea log, news;
@@ -399,7 +400,7 @@ public class LauncherMain {
         top.add(heroWrap, BorderLayout.CENTER);
         root.add(top, BorderLayout.NORTH);
 
-        // center: version + account cards side by side, then log
+        // center: version + local profile cards side by side, then log
         JPanel center = new JPanel(new BorderLayout(0, 12));
         center.setOpaque(false);
         center.setBorder(BorderFactory.createEmptyBorder(14, 16, 12, 16));
@@ -436,18 +437,15 @@ public class LauncherMain {
         swGl.addActionListener(e -> saveCfg());
         g.gridy = 3; verCard.add(swGl, g);
 
-        JLabel mlab = new JLabel("ЗЕРКАЛО");
+        JLabel mlab = new JLabel("ИСТОЧНИК ВЕРСИЙ");
         mlab.setForeground(SUB); mlab.setFont(new Font("SansSerif", Font.BOLD, 11));
         g.gridy = 4; verCard.add(mlab, g);
-        boolean ruRegion = "RU".equals(java.util.Locale.getDefault().getCountry());
         mirrorBox = new JComboBox<>(new String[]{
-            "GitHub" + (ruRegion ? "" : "  — рекомендуется"),
-            "GitVerse" + (ruRegion ? "  — рекомендуется" : "")
+            "GitHub — актуальные версии",
+            "GitVerse — до v0.1.16.1"
         });
         styleCombo(mirrorBox);
-        String savedMirror = cfg.getProperty("mirror", "");
-        mirrorBox.setSelectedIndex(savedMirror.isEmpty() ? (ruRegion ? 1 : 0)
-                                   : savedMirror.equals("gitverse") ? 1 : 0);
+        mirrorBox.setSelectedIndex("gitverse".equals(cfg.getProperty("mirror", "")) ? 1 : 0);
         mirrorBox.addActionListener(e -> { saveCfg(); fetchVersionsAsync(); checkUpdateAsync(); });
         g.gridy = 5; verCard.add(mirrorBox, g);
         cards.add(verCard);
@@ -456,20 +454,16 @@ public class LauncherMain {
         GridBagConstraints a = new GridBagConstraints();
         a.insets = new Insets(3, 0, 3, 0); a.fill = GridBagConstraints.HORIZONTAL;
         a.gridx = 0; a.gridy = 0; a.weightx = 1; a.gridwidth = 2;
-        JLabel alab = new JLabel("АККАУНТ");
+        JLabel alab = new JLabel("ЛОКАЛЬНЫЙ ПРОФИЛЬ");
         alab.setForeground(SUB); alab.setFont(new Font("SansSerif", Font.BOLD, 11));
         accCard.add(alab, a);
         account = new JLabel(); account.setForeground(TEXT); account.setFont(UI.deriveFont(Font.BOLD, 14f));
         a.gridy = 1; accCard.add(account, a);
-        loginBtn = new FlatButton("Войти через сайт", false);
-        guestBtn = new FlatButton("Без лицензии", false);
-        loginBtn.setFont(UI); guestBtn.setFont(UI);
-        loginBtn.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
-        guestBtn.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
-        loginBtn.addActionListener(e -> loginViaSite());
-        guestBtn.addActionListener(e -> playAsGuest());
-        a.gridy = 2; a.gridwidth = 1; a.insets = new Insets(6, 0, 0, 6); accCard.add(loginBtn, a);
-        a.gridx = 1; a.insets = new Insets(6, 0, 0, 0); accCard.add(guestBtn, a);
+        nickBtn = new FlatButton("Изменить ник", false);
+        nickBtn.setFont(UI);
+        nickBtn.setBorder(BorderFactory.createEmptyBorder(7, 12, 7, 12));
+        nickBtn.addActionListener(e -> editLocalProfile());
+        a.gridy = 2; a.gridwidth = 2; a.insets = new Insets(6, 0, 0, 0); accCard.add(nickBtn, a);
         cards.add(accCard);
         refreshAccount();
 
@@ -639,102 +633,39 @@ public class LauncherMain {
         return out.toString();
     }
 
-    // ---------------- account ----------------
+    // ---------------- local profile ----------------
     static void refreshAccount() {
         Properties p = readProfile();
-        String name = p.getProperty("name", "");
-        String token = p.getProperty("token", "");
-        SwingUtilities.invokeLater(() -> {
-            if (!token.isEmpty()) account.setText("Аккаунт: " + name);
-            else if (!name.isEmpty()) account.setText("Гость: " + name);
-            else account.setText("Не выполнен вход");
-        });
-        if (token.isEmpty()) return;
-        new Thread(() -> {          // live premium check against the backend
-            try {
-                String resp = httpGetAny(BACKEND + "/api/me?token=" + java.net.URLEncoder.encode(token, "UTF-8"));
-                if (resp.contains("bad token")) {
-                    SwingUtilities.invokeLater(() -> account.setText("<html>Аккаунт: " + name
-                        + "  <font color='#e0a050'>сессия истекла — войди заново</font></html>"));
-                    return;
-                }
-                boolean prem = resp.contains("\"premium\":true");
-                Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]*)\"").matcher(resp);
-                String nm = m.find() ? m.group(1) : name;
-                SwingUtilities.invokeLater(() -> account.setText("<html>Аккаунт: " + nm
-                    + (prem ? "  <font color='#c6e86b'><b>✓ PREMIUM</b></font>"
-                            : "  <font color='#8b93a3'>FREE</font>") + "</html>"));
-            } catch (Exception ignored) {}
-        }, "launcher-premium").start();
+        String name = p.getProperty("name", localDefaultName()).trim();
+        if (!validNick(name)) name = localDefaultName();
+        if (!Files.exists(PROFILE)) writeProfile(name);
+        String shown = name;
+        SwingUtilities.invokeLater(() -> account.setText("Ник: " + shown));
     }
 
-    static void loginViaSite() {
-        setButtons(false);
-        new Thread(() -> {
-            try {
-                appendLog("Запрашиваю код входа...");
-                String start = httpPost(BACKEND + "/api/device/start", "");
-                String code = extract(start, "code");
-                if (code == null) throw new IOException("no code from server");
-                String url = BACKEND + "/?code=" + code;
-                openInBrowser(url);
-                setStatus("Подтвердите вход в браузере...", 0);
-                for (int i = 0; i < 90; i++) {           // poll up to ~3 min
-                    Thread.sleep(2000);
-                    String poll = httpPost(BACKEND + "/api/device/poll", "code=" + code);
-                    if (poll.contains("\"status\":\"ok\"")) {
-                        String token = extract(poll, "token"), name = extract(poll, "name");
-                        boolean premium = poll.contains("\"premium\":true");
-                        writeProfile(name, token);
-                        refreshAccount();
-                        setStatus("Вошли как " + name + (premium ? " ✓" : ""), 0);
-                        appendLog("Вход выполнен: " + name + (premium ? " (premium)" : ""));
-                        return;
-                    }
-                }
-                setStatus("Время ожидания входа истекло", 0);
-            } catch (Exception ex) {
-                setStatus("Ошибка входа: " + ex.getMessage(), 0);
-                appendLog("login error: " + ex);
-            } finally { setButtons(true); }
-        }, "launcher-login").start();
+    static boolean validNick(String nick) {
+        return nick != null && nick.matches("[\\p{L}\\p{N}_-]{1,20}");
     }
 
-    /** Try to open a real browser; always show a copyable link as a fallback. */
-    static void openInBrowser(String url) {
-        // copy to clipboard
-        try {
-            Toolkit.getDefaultToolkit().getSystemClipboard()
-                .setContents(new java.awt.datatransfer.StringSelection(url), null);
-        } catch (Exception ignored) {}
-        // best-effort auto-open: prefer real browsers over the default http handler
-        boolean opened = false;
-        String[] browsers = WINDOWS
-            ? new String[]{"cmd", "/c", "start", "", url}
-            : new String[]{"xdg-open", url};
-        try { new ProcessBuilder(browsers).start(); opened = true; } catch (Exception ignored) {}
-        appendLog("Ссылка для входа: " + url);
-        final boolean auto = opened;
-        SwingUtilities.invokeLater(() -> {
-            JTextField field = new JTextField(url);
-            field.setEditable(false);
-            field.selectAll();
-            JPanel panel = new JPanel(new BorderLayout(6, 6));
-            panel.add(new JLabel("<html>Открой эту ссылку в браузере и войди.<br>"
-                + "Ссылка скопирована в буфер обмена" + (auto ? " (и попытались открыть)." : ".") + "</html>"), BorderLayout.NORTH);
-            panel.add(field, BorderLayout.CENTER);
-            JOptionPane.showMessageDialog(null, panel, "Вход через сайт", JOptionPane.INFORMATION_MESSAGE);
-        });
+    static String localDefaultName() {
+        String name = System.getProperty("user.name", "LocalPlayer").replaceAll("[^\\p{L}\\p{N}_-]", "_");
+        if (name.isEmpty()) name = "LocalPlayer";
+        return name.substring(0, Math.min(20, name.length()));
     }
 
-    static void playAsGuest() {
-        String nick = JOptionPane.showInputDialog(null, "Введите ник (без лицензии):", "Гость", JOptionPane.QUESTION_MESSAGE);
+    static void editLocalProfile() {
+        String current = readProfile().getProperty("name", "Player");
+        String nick = JOptionPane.showInputDialog(null,
+            "Ник: 1–20 букв, цифр, '_' или '-'", current);
         if (nick == null) return;
         nick = nick.trim();
-        if (nick.isEmpty()) nick = "Player";
-        writeProfile(nick, "");   // no token => free
+        if (!validNick(nick)) {
+            JOptionPane.showMessageDialog(null, "Недопустимый ник.", "Локальный профиль", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        writeProfile(nick);
         refreshAccount();
-        setStatus("Гость: " + nick, 0);
+        setStatus("Локальный ник: " + nick, 0);
     }
 
     static Properties readProfile() {
@@ -742,32 +673,11 @@ public class LauncherMain {
         try (InputStream in = Files.newInputStream(PROFILE)) { p.load(in); } catch (IOException ignored) {}
         return p;
     }
-    static void writeProfile(String name, String token) {
+    static void writeProfile(String name) {
         Properties p = new Properties();
         p.setProperty("name", name == null ? "" : name);
-        p.setProperty("token", token == null ? "" : token);
         try { Files.createDirectories(HOME); try (OutputStream o = Files.newOutputStream(PROFILE)) { p.store(o, "PACMine profile"); } }
         catch (IOException e) { appendLog("cannot save profile: " + e.getMessage()); }
-    }
-
-    static String extract(String json, String key) {
-        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"").matcher(json);
-        return m.find() ? m.group(1) : null;
-    }
-
-    static String httpPost(String url, String body) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setRequestMethod("POST");
-        c.setDoOutput(true);
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", "PACMine-Launcher");
-        c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-        c.setConnectTimeout(8000); c.setReadTimeout(8000);
-        try (OutputStream o = c.getOutputStream()) { o.write(body.getBytes("UTF-8")); }
-        InputStream in = c.getResponseCode() < 400 ? c.getInputStream() : c.getErrorStream();
-        ByteArrayOutputStream bo = new ByteArrayOutputStream();
-        if (in != null) { byte[] buf = new byte[4096]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); }
-        return bo.toString("UTF-8");
     }
 
     // ---------------- actions ----------------
@@ -775,7 +685,6 @@ public class LauncherMain {
     static boolean gvFirst() {
         return mirrorBox != null && String.valueOf(mirrorBox.getSelectedItem()).startsWith("GitVerse");
     }
-
     static String ref() {
         if (devBox != null && devBox.isSelected()) return "main";   // dev: latest commit
         Object s = versionBox.getSelectedItem();
@@ -826,30 +735,42 @@ public class LauncherMain {
         appendLog("Downloading " + ref + " ...");
         Files.createDirectories(HOME);
         Path zip = HOME.resolve("game.zip");
+        Path stage = HOME.resolve("installing");
+        Path backup = HOME.resolve("PACMine.previous");
         String ghZip = archiveUrl(ref), gvZip = GV_API + "/archive/" + ref + ".zip";
         try {
             download(gvFirst() ? gvZip : ghZip, zip);
         } catch (IOException e) {
-            appendLog((gvFirst() ? "GitVerse" : "GitHub") + " недоступен, качаю с зеркала "
-                + (gvFirst() ? "GitHub" : "GitVerse") + "...");
+            appendLog((gvFirst() ? "GitVerse" : "GitHub") + " недоступен, пробую второй источник...");
             download(gvFirst() ? ghZip : gvZip, zip);
         }
         setStatus("Extracting...", 40);
-        // clean previous extraction dirs
-        deleteExtracted();
-        extract(zip, HOME);
-        Path extracted = findExtracted();
-        if (extracted != null) {
-            deleteDir(GAMEDIR);
-            Files.move(extracted, GAMEDIR);
+        deleteDir(stage);
+        Files.createDirectories(stage);
+        try {
+            extract(zip, stage);
+            Path extracted = findExtracted(stage);
+            if (extracted == null) throw new IOException("archive does not contain a PACMine directory");
+            setStatus("Fetching libraries...", 60);
+            appendLog("Fetching LWJGL...");
+            exec(extracted, null, script("get-deps"));
+            setStatus("Compiling...", 80);
+            appendLog("Compiling...");
+            exec(extracted, null, script("build"));
+
+            deleteDir(backup);
+            if (Files.exists(GAMEDIR)) Files.move(GAMEDIR, backup);
+            try {
+                Files.move(extracted, GAMEDIR);
+            } catch (Exception moveError) {
+                if (!Files.exists(GAMEDIR) && Files.exists(backup)) Files.move(backup, GAMEDIR);
+                throw moveError;
+            }
+            deleteDir(backup);
+        } finally {
+            Files.deleteIfExists(zip);
+            deleteDir(stage);
         }
-        Files.deleteIfExists(zip);
-        setStatus("Fetching libraries...", 60);
-        appendLog("Fetching LWJGL...");
-        exec(GAMEDIR, null, script("get-deps"));
-        setStatus("Compiling...", 80);
-        appendLog("Compiling...");
-        exec(GAMEDIR, null, script("build"));
         // record installed version
         String sha = latestSha(ref);
         cfg.setProperty("installedRef", ref);
@@ -912,22 +833,33 @@ public class LauncherMain {
         List<String> out = new ArrayList<>();
         String json = httpGet(GV_API + "/tags");
         Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"(v[^\"]+)\"").matcher(json);
-        while (m.find()) out.add(m.group(1));
+        while (m.find()) {
+            String tag = m.group(1);
+            if (isGitVerseVersion(tag)) out.add(tag);
+        }
         return out;
+    }
+
+    /** GitVerse is kept as an archive and deliberately stops at v0.1.16.1. */
+    static boolean isGitVerseVersion(String tag) {
+        Matcher m = Pattern.compile("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.(\\d+))?$").matcher(tag);
+        if (!m.matches()) return false;
+        int[] version = {
+            Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)),
+            Integer.parseInt(m.group(3)), m.group(4) == null ? 0 : Integer.parseInt(m.group(4))
+        };
+        int[] maximum = {0, 1, 16, 1};
+        for (int i = 0; i < version.length; i++) {
+            if (version[i] != maximum[i]) return version[i] < maximum[i];
+        }
+        return true;
     }
 
     static List<String> fetchReleaseTags() {
         boolean gv = gvFirst();
-        String first = gv ? "GitVerse" : "GitHub", second = gv ? "GitHub" : "GitVerse";
         try {
-            List<String> out = gv ? tagsFromGitVerse() : tagsFromGitHub();
-            if (!out.isEmpty()) return out;
-        } catch (Exception e) { appendLog(first + " недоступен (" + e.getMessage() + "), пробую " + second + "..."); }
-        try {
-            List<String> out = gv ? tagsFromGitHub() : tagsFromGitVerse();
-            if (!out.isEmpty()) appendLog("Версии получены с зеркала " + second);
-            return out;
-        } catch (Exception e) { appendLog(second + " тоже недоступен: " + e.getMessage()); }
+            return gv ? tagsFromGitVerse() : tagsFromGitHub();
+        } catch (Exception e) { appendLog((gv ? "GitVerse" : "GitHub") + " недоступен: " + e.getMessage()); }
         return new ArrayList<>();
     }
 
@@ -941,9 +873,8 @@ public class LauncherMain {
 
     static String latestSha(String ref) {
         String gh = "https://api.github.com/repos/" + REPO + "/commits/" + ref;
-        String gvu = GV_API + "/commits?sha=" + ref + "&per_page=1";
-        String s = shaFrom(gvFirst() ? gvu : gh);
-        return s != null ? s : shaFrom(gvFirst() ? gh : gvu);
+        String gv = GV_API + "/commits?sha=" + ref + "&per_page=1";
+        return shaFrom(gvFirst() ? gv : gh);
     }
 
     static String archiveUrl(String ref) {
@@ -993,46 +924,64 @@ public class LauncherMain {
 
     static void download(String url, Path dest) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        if (!"https".equalsIgnoreCase(c.getURL().getProtocol())) throw new IOException("refusing non-HTTPS download");
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", "PACMine-Launcher");
         try (InputStream in = c.getInputStream()) {
-            Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
+            copyLimited(in, dest);
         }
     }
 
     static void extract(Path zip, Path destDir) throws IOException {
         try (ZipFile zf = new ZipFile(zip.toFile())) {
             Enumeration<? extends ZipEntry> en = zf.entries();
+            long total = 0;
+            int entries = 0;
             while (en.hasMoreElements()) {
                 ZipEntry e = en.nextElement();
+                if (++entries > MAX_ARCHIVE_ENTRIES) throw new IOException("archive has too many files");
+                if (e.getSize() > MAX_ARCHIVE_BYTES || (e.getSize() >= 0 && total + e.getSize() > MAX_ARCHIVE_BYTES))
+                    throw new IOException("archive is too large");
                 Path out = destDir.resolve(e.getName()).normalize();
                 if (!out.startsWith(destDir)) continue;
                 if (e.isDirectory()) Files.createDirectories(out);
                 else {
                     Files.createDirectories(out.getParent());
                     try (InputStream in = zf.getInputStream(e)) {
-                        Files.copy(in, out, StandardCopyOption.REPLACE_EXISTING);
+                        total = copyLimited(in, out, total);
                     }
                 }
             }
         }
     }
 
+    static void copyLimited(InputStream in, Path dest) throws IOException {
+        copyLimited(in, dest, 0);
+    }
+
+    static long copyLimited(InputStream in, Path dest, long total) throws IOException {
+        try (OutputStream out = Files.newOutputStream(dest, StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_ARCHIVE_BYTES) throw new IOException("download is too large");
+                out.write(buffer, 0, read);
+            }
+        }
+        return total;
+    }
+
     static boolean isGameDir(String name) {
         return name.startsWith("PACMine-") || name.equalsIgnoreCase("pacmine");
     }
 
-    static Path findExtracted() throws IOException {
-        try (var s = Files.list(HOME)) {
+    static Path findExtracted(Path base) throws IOException {
+        try (var s = Files.list(base)) {
             return s.filter(Files::isDirectory)
                     .filter(p -> isGameDir(p.getFileName().toString()))
                     .findFirst().orElse(null);
-        }
-    }
-    static void deleteExtracted() throws IOException {
-        try (var s = Files.list(HOME)) {
-            for (Path p : (Iterable<Path>) s::iterator)
-                if (Files.isDirectory(p) && isGameDir(p.getFileName().toString())) deleteDir(p);
         }
     }
 

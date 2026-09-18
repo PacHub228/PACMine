@@ -15,6 +15,10 @@ import java.util.zip.GZIPOutputStream;
  * removes the old .pmw so a world never exists in both formats.
  */
 public class SaveGame {
+    private static final int MAX_ENTITIES = 100000;
+    private static final int MAX_SLOTS = 256;
+    private static final int MAX_CHUNKS = 100000;
+    private static final int CHUNK_BYTES = World.CHUNK * World.SY * World.CHUNK;
     private static final int MAGIC_PMS  = 0x504D5331;  // "PMS1" full save
     private static final int MAGIC_PMS2 = 0x504D5332;  // "PMS2" adds zombie type + hp
     private static final int MAGIC_PMS3 = 0x504D5333;  // "PMS3" adds animals
@@ -25,6 +29,11 @@ public class SaveGame {
     private static final int MAGIC     = 0x50414331;   // "PAC1" legacy finite
     private static final int MAGIC_INF = 0x50414332;   // "PAC2" legacy infinite
     public static final File DIR = new File("saves");
+
+    /** World names are file names, so keep them to a single safe path segment. */
+    public static boolean validName(String name) {
+        return name != null && name.matches("[\\p{L}\\p{N}_-]{1,32}");
+    }
 
     public int chunks;
     public boolean hostileMobs, creative, superMode, protection;
@@ -81,11 +90,13 @@ public class SaveGame {
     }
 
     public static void delete(String name) {
+        if (!validName(name)) return;
         new File(DIR, name + ".pms").delete();
         new File(DIR, name + ".pmw").delete();
     }
 
     public void save(String name) throws IOException {
+        if (!validName(name)) throw new IOException("invalid world name");
         DIR.mkdirs();
         ByteArrayOutputStream buf = new ByteArrayOutputStream(1 << 16);
         try (DataOutputStream out = new DataOutputStream(new GZIPOutputStream(buf))) {
@@ -159,11 +170,20 @@ public class SaveGame {
                 out.write(blocks);
             }
         }
-        java.nio.file.Files.write(new File(DIR, name + ".pms").toPath(), PMCrypt.encrypt(buf.toByteArray()));
+        java.nio.file.Path target = new File(DIR, name + ".pms").toPath();
+        java.nio.file.Path temp = new File(DIR, name + ".pms.tmp").toPath();
+        java.nio.file.Files.write(temp, PMCrypt.encrypt(buf.toByteArray()));
+        try {
+            java.nio.file.Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            java.nio.file.Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         new File(DIR, name + ".pmw").delete();   // superseded by the .pms
     }
 
     public static SaveGame load(String name) throws IOException {
+        if (!validName(name)) throw new IOException("invalid world name");
         File pms = new File(DIR, name + ".pms");
         File f = pms.exists() ? pms : new File(DIR, name + ".pmw");
         byte[] raw = PMCrypt.decrypt(java.nio.file.Files.readAllBytes(f.toPath()));
@@ -197,16 +217,16 @@ public class SaveGame {
         s.wave = in.readInt(); s.waveTimer = in.readDouble();
         s.selectedSlot = in.readInt();
         if (v4) {
-            int ns = in.readInt();
+            int ns = checkedCount(in.readInt(), MAX_SLOTS, "slot count");
             s.slotType = new byte[ns];
             s.slotCount = new int[ns];
             for (int i = 0; i < ns; i++) { s.slotType[i] = in.readByte(); s.slotCount[i] = in.readInt(); }
         } else {
-            int ni = in.readInt();
+            int ni = checkedCount(in.readInt(), MAX_SLOTS, "inventory count");
             s.inv = new int[ni];
             for (int i = 0; i < ni; i++) s.inv[i] = in.readInt();
         }
-        int nz = in.readInt();
+        int nz = checkedCount(in.readInt(), MAX_ENTITIES, "zombie count");
         for (int i = 0; i < nz; i++) {
             double zx = in.readDouble(), zy = in.readDouble(), zz = in.readDouble();
             float zyaw = in.readFloat();
@@ -215,24 +235,24 @@ public class SaveGame {
             double hp = v2 ? in.readDouble() : 2;
             s.zombies.add(new double[]{zx, zy, zz, zyaw, combat, type, hp});
         }
-        int nd = in.readInt();
+        int nd = checkedCount(in.readInt(), MAX_ENTITIES, "drop count");
         for (int i = 0; i < nd; i++)
             s.drops.add(new double[]{in.readByte(), in.readDouble(), in.readDouble(), in.readDouble()});
         if (v3) {
-            int na = in.readInt();
+            int na = checkedCount(in.readInt(), MAX_ENTITIES, "animal count");
             for (int i = 0; i < na; i++)
                 s.animals.add(new double[]{in.readInt(), in.readDouble(), in.readDouble(),
                                            in.readDouble(), in.readFloat()});
         }
         if (v5) {
-            int nn = in.readInt();
+            int nn = checkedCount(in.readInt(), MAX_ENTITIES, "npc count");
             for (int i = 0; i < nn; i++) {
                 s.npcNames.add(in.readUTF());
                 s.npcData.add(new double[]{in.readDouble(), in.readDouble(), in.readDouble(), in.readFloat()});
             }
         }
         if (v7) {
-            int nf = in.readInt();
+            int nf = checkedCount(in.readInt(), MAX_ENTITIES, "furnace count");
             for (int i = 0; i < nf; i++)
                 s.furnaces.add(new double[]{in.readLong(), in.readByte(), in.readInt(), in.readByte(),
                                             in.readInt(), in.readByte(), in.readInt(), in.readDouble(), in.readInt()});
@@ -260,17 +280,28 @@ public class SaveGame {
     private static void readWorld(DataInputStream in, SaveGame s) throws IOException {
         if (s.infinite) {
             s.seed = in.readLong();
-            int n = in.readInt();
+            int n = checkedCount(in.readInt(), MAX_CHUNKS, "chunk count");
             s.chunkMap = new java.util.HashMap<>();
             for (int i = 0; i < n; i++) {
                 long k = in.readLong();
-                byte[] data = new byte[in.readInt()];
+                int len = in.readInt();
+                if (len != CHUNK_BYTES) throw new IOException("invalid chunk size");
+                byte[] data = new byte[len];
                 in.readFully(data);
                 s.chunkMap.put(k, data);
             }
         } else {
-            s.blocks = new byte[in.readInt()];
+            if (s.chunks < 2 || s.chunks > 24) throw new IOException("invalid finite world size");
+            int expected = s.chunks * World.CHUNK * World.SY * s.chunks * World.CHUNK;
+            int len = in.readInt();
+            if (len != expected) throw new IOException("invalid finite world size");
+            s.blocks = new byte[len];
             in.readFully(s.blocks);
         }
+    }
+
+    private static int checkedCount(int value, int max, String label) throws IOException {
+        if (value < 0 || value > max) throw new IOException("invalid " + label);
+        return value;
     }
 }

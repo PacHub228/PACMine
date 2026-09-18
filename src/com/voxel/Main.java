@@ -47,14 +47,11 @@ public class Main {
     private final java.util.concurrent.ConcurrentLinkedQueue<NetEvent> netQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.Map<Integer, double[]> remotePlayers = new java.util.HashMap<>(); // id -> {x,y,z,yaw,pitch}
     private final java.util.Map<Integer, String> remoteNames = new java.util.HashMap<>();
-    private final java.util.Map<Integer, Boolean> remotePrem = new java.util.HashMap<>();
     private final StringBuilder ipInput = new StringBuilder("localhost");
     private double moveSendTimer = 0;
 
-    // profile (free vs premium edition)
+    // local profile; no online account or license is required
     private String profileName = "Player";
-    private boolean profilePremium = false;
-    private String profileToken = "";
     private boolean inMenu = true;
     private Screen screen = Screen.MAIN;
     private boolean paused = false;        // in-game pause overlay
@@ -290,20 +287,16 @@ public class Main {
         updateTitle();
     }
 
-    /** Load the profile (name + login token); verify the license off-thread so the
-     *  window keeps responding even when the backend is slow or unreachable. */
+    /** Load the nickname written by the launcher into the local profile. */
     private void loadProfile() {
         java.util.Properties p = new java.util.Properties();
         java.io.File f = new java.io.File(System.getProperty("user.home"), ".pacmine/profile.properties");
         try (java.io.InputStream in = new java.io.FileInputStream(f)) { p.load(in); } catch (Exception ignored) {}
-        String name = p.getProperty("name", "Player").trim();
-        profileToken = p.getProperty("token", "").trim();
-        profileName = name.isEmpty() ? "Player" : name;
-        profilePremium = false;
-        new Thread(() -> {
-            String[] v = AuthClient.verify(profileToken);   // license check (network)
-            if (v != null) { profileName = v[0]; profilePremium = v[1].equals("true"); }
-        }, "license-check").start();
+        String fallback = System.getProperty("user.name", "LocalPlayer").replaceAll("[^\\p{L}\\p{N}_-]", "_");
+        if (fallback.isEmpty()) fallback = "LocalPlayer";
+        fallback = fallback.substring(0, Math.min(20, fallback.length()));
+        String name = p.getProperty("name", fallback).trim();
+        profileName = name.matches("[\\p{L}\\p{N}_-]{1,20}") ? name : fallback;
     }
 
     /** Create a brand-new world of the chosen size and start playing it. chunks==1 => infinite. */
@@ -450,7 +443,7 @@ public class Main {
         try {
             server = new NetServer(world, protection, netQueue);
             server.setLiquidSim(liquidSim);
-            server.setHostInfo(profileName, profilePremium);
+            server.setHostInfo(profileName);
             server.start();
             enterGame();
         } catch (IOException e) {
@@ -463,7 +456,7 @@ public class Main {
         try {
             remotePlayers.clear(); netQueue.clear();
             client = new NetClient(ip, NetServer.PORT, netQueue);
-            client.sendName(profileName, profileToken);
+            client.sendName(profileName);
             multiplayer = true; isHost = false; connecting = true;
             // world + player are built when the WORLD event arrives
         } catch (IOException e) {
@@ -506,10 +499,10 @@ public class Main {
                     remotePlayers.put(e.id, new double[]{e.px, e.py, e.pz, e.yaw, e.pitch});
                     break;
                 case NetEvent.NAME:
-                    remoteNames.put(e.id, e.name); remotePrem.put(e.id, e.premium);
+                    remoteNames.put(e.id, e.name);
                     break;
                 case NetEvent.LEAVE:
-                    remotePlayers.remove(e.id); remoteNames.remove(e.id); remotePrem.remove(e.id);
+                    remotePlayers.remove(e.id); remoteNames.remove(e.id);
                     break;
                 case NetEvent.CHAT:
                     addChat(e.name + ": " + e.text);
@@ -1034,8 +1027,9 @@ public class Main {
         } else if (key(GLFW_KEY_SPACE)) {
             player.jump();
         }
-        // sprint: hold Left Shift while moving forward (survival; in creative Shift descends)
-        player.sprinting = !player.creative && f > 0 && key(GLFW_KEY_LEFT_SHIFT);
+        // Shift speeds up movement in every mode; in creative it also makes descent faster.
+        boolean shift = key(GLFW_KEY_LEFT_SHIFT) || key(GLFW_KEY_RIGHT_SHIFT);
+        player.sprinting = shift && (f != 0 || s != 0 || (player.creative && v != 0));
         player.update(f, s, v, dt);
     }
 
@@ -1790,7 +1784,7 @@ public class Main {
         // keep GL_BLEND on: the held sword is drawn after this and needs alpha
     }
 
-    /** Draw nicknames (and a blue premium tick) above remote players. */
+    /** Draw local-profile nicknames above remote players. */
     private void drawNameTags() {
         if (!multiplayer || remotePlayers.isEmpty()) return;
         for (java.util.Map.Entry<Integer, double[]> en : remotePlayers.entrySet()) {
@@ -1803,8 +1797,7 @@ public class Main {
             if (sc == null) continue;
             float ps = 2.5f;
             float w = Font5x7.width(nm, ps);
-            boolean prem = Boolean.TRUE.equals(remotePrem.get(id));
-            float checkW = prem ? 9 * ps : 0;
+            float checkW = 0;
             float x = sc[0] - (w + checkW) / 2, y = sc[1];
             // backdrop
             glDisable(GL_TEXTURE_2D);
@@ -1813,8 +1806,6 @@ public class Main {
             // name
             glColor3f(1, 1, 1);
             Font5x7.draw(nm, x, y, ps);
-            // blue premium tick
-            if (prem) drawCheck(x + w + 4 * ps, y, 7 * ps);
         }
     }
 
@@ -1949,10 +1940,10 @@ public class Main {
 
 
     // ---------------- crafting panel (right of the inventory) ----------------
-    private static final float CRAFT_W = 250, CRAFT_ROW = 34;
+    private static final float CRAFT_W = 290, CRAFT_ROW = 46;
     private float craftX() { return invX() + invPanelW() + 12; }
     private float craftY() { return invY(); }
-    private float craftRowY(int i) { return craftY() + 54 + i * CRAFT_ROW; }
+    private float craftRowY(int i) { return craftY() + 66 + i * CRAFT_ROW; }
 
     private boolean canCraft(Recipes.Recipe r) {
         for (int i = 0; i < r.inputs.length; i++)
@@ -1996,16 +1987,19 @@ public class Main {
 
     private void drawCraftPanel() {
         float px = craftX(), py = craftY(), pw = CRAFT_W;
-        float ph = 54 + Recipes.ALL.length * CRAFT_ROW + INV_PAD;
+        float ph = 66 + Recipes.ALL.length * CRAFT_ROW + INV_PAD;
         glDisable(GL_TEXTURE_2D);
-        glColor4f(0, 0, 0, 0.4f); quad(px + 5, py + 5, px + pw + 5, py + ph + 5);
-        glColor4f(0.22f, 0.24f, 0.30f, 0.98f); quad(px, py, px + pw, py + ph);
-        glColor4f(0.42f, 0.46f, 0.55f, 1f);
+        glColor4f(0, 0, 0, 0.55f); quad(px + 5, py + 5, px + pw + 5, py + ph + 5);
+        glColor4f(0.12f, 0.14f, 0.19f, 0.98f); quad(px, py, px + pw, py + ph);
+        glColor4f(0.40f, 0.46f, 0.57f, 1f);
         float bt = 2;
         quad(px, py, px + pw, py + bt); quad(px, py + ph - bt, px + pw, py + ph);
         quad(px, py, px + bt, py + ph); quad(px + pw - bt, py, px + pw, py + ph);
-        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("КРАФТ", px + 16 + 2, py + 17, 3);
-        glColor3f(0.85f, 0.95f, 0.6f); Font5x7.draw("КРАФТ", px + 16, py + 15, 3);
+        glColor4f(0.20f, 0.25f, 0.32f, 1f); quad(px + bt, py + bt, px + pw - bt, py + 56);
+        glColor4f(0.70f, 0.92f, 0.42f, 1f); quad(px + 14, py + 15, px + 19, py + 40);
+        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("КРАФТ", px + 30 + 2, py + 13 + 2, 3);
+        glColor3f(0.90f, 0.98f, 0.68f); Font5x7.draw("КРАФТ", px + 30, py + 13, 3);
+        glColor4f(1, 1, 1, 0.55f); Font5x7.draw("ВЫБЕРИ РЕЦЕПТ", px + 30, py + 38, 1.35f);
 
         for (int i = 0; i < Recipes.ALL.length; i++) {
             Recipes.Recipe r = Recipes.ALL[i];
@@ -2013,25 +2007,30 @@ public class Main {
             boolean ok = canCraft(r);
             boolean hover = mouseX >= px && mouseX <= px + pw && mouseY >= y && mouseY <= y + CRAFT_ROW - 4;
             glDisable(GL_TEXTURE_2D);
-            glColor4f(ok ? 0.18f : 0.12f, ok ? 0.22f : 0.13f, ok ? 0.16f : 0.15f, hover && ok ? 0.95f : 0.7f);
+            glColor4f(ok ? 0.16f : 0.11f, ok ? 0.23f : 0.12f, ok ? 0.18f : 0.15f, hover && ok ? 0.98f : 0.82f);
             quad(px + 8, y, px + pw - 8, y + CRAFT_ROW - 6);
-            if (ok) { glColor4f(0.55f, 0.85f, 0.4f, 1f); quad(px + 8, y, px + 11, y + CRAFT_ROW - 6); }
+            glColor4f(ok ? 0.56f : 0.38f, ok ? 0.86f : 0.41f, ok ? 0.40f : 0.46f, 1f);
+            quad(px + 8, y, px + 12, y + CRAFT_ROW - 6);
             // name
             String nm = r.tool != Recipes.TOOL_NONE ? Recipes.toolName(r.tool)
                                                     : blockName(r.output) + " x" + r.outCount;
             glColor4f(1, 1, 1, ok ? 1f : 0.4f);
-            Font5x7.draw(nm, px + 16, y + 3, 1.9f);
+            Font5x7.draw(nm, px + 20, y + 5, 1.85f);
             // ingredients
             StringBuilder need = new StringBuilder();
             for (int k = 0; k < r.inputs.length; k++) {
                 if (k > 0) need.append(" + ");
                 need.append(blockName(r.inputs[k])).append(" ").append(r.counts[k]);
             }
-            glColor4f(1, 1, 1, ok ? 0.65f : 0.3f);
-            Font5x7.draw(need.toString(), px + 16, y + 17, 1.4f);
+            glColor4f(1, 1, 1, ok ? 0.68f : 0.32f);
+            Font5x7.draw(need.toString(), px + 20, y + 25, 1.35f);
+            String state = ok ? "ГОТОВО" : "НУЖНЫ РЕСУРСЫ";
+            glColor4f(ok ? 0.68f : 0.72f, ok ? 0.95f : 0.50f, ok ? 0.44f : 0.50f, ok ? 0.92f : 0.70f);
+            float ss = 1.15f;
+            Font5x7.draw(state, px + pw - 16 - Font5x7.width(state, ss), y + 6, ss);
         }
         glColor4f(1, 1, 1, 0.45f);
-        Font5x7.draw("КЛИК - СКРАФТИТЬ", px + 16, py + ph - 16, 1.5f);
+        Font5x7.draw("КЛИКНИ ПО РЕЦЕПТУ", px + 16, py + ph - 16, 1.4f);
     }
 
     // ---------------- furnace screen ----------------

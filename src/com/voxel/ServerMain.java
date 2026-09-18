@@ -39,7 +39,11 @@ public class ServerMain {
         int chunks = Math.max(2, Math.min(24, intProp("world-size", 8)));
         boolean protection = Boolean.parseBoolean(props.getProperty("protection", "true"));
         int autosave = Math.max(15, intProp("autosave-seconds", 120));
-        worldName = props.getProperty("world-name", "world");
+        worldName = props.getProperty("world-name", "world").trim();
+        if (!SaveGame.validName(worldName)) {
+            log("Invalid world-name in server.properties; using world");
+            worldName = "world";
+        }
 
         boolean infinite = Boolean.parseBoolean(props.getProperty("infinite", "false"));
         int pregen = Math.max(2, Math.min(250, intProp("pregen-chunks", 250)));
@@ -114,9 +118,8 @@ public class ServerMain {
                 while ((e = queue.poll()) != null) {
                     if (e.type == NetEvent.NAME && !players.containsValue(e.name)) {
                         players.put(e.id, e.name);
-                        String badge = e.premium ? "license: PREMIUM" : e.licensed ? "license: yes" : "no license (guest)";
-                        log("+ " + e.name + " joined [" + badge + "]");
-                        if (plugins != null) plugins.fire("join", e.name, e.premium, e.licensed);
+                        log("+ " + e.name + " joined [local profile]");
+                        if (plugins != null) plugins.fire("join", e.name);
                     } else if (e.type == NetEvent.LEAVE) {
                         String n = players.remove(e.id);
                         if (n != null) {
@@ -199,9 +202,13 @@ public class ServerMain {
                 int i = line.indexOf(':');
                 if (i <= 0) continue;
                 String[] p = line.substring(i + 1).split(",");
-                if (p.length == 3)
-                    m.put(line.substring(0, i), new double[]{
-                        Double.parseDouble(p[0]), Double.parseDouble(p[1]), Double.parseDouble(p[2])});
+                String name = line.substring(0, i);
+                if (p.length == 3 && name.matches("[\\p{L}\\p{N}_-]{1,20}")) {
+                    double x = Double.parseDouble(p[0]), y = Double.parseDouble(p[1]), z = Double.parseDouble(p[2]);
+                    if (Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(z)
+                            && y >= -16 && y <= World.SY + 16)
+                        m.put(name, new double[]{x, y, z});
+                }
             }
             server.importPositions(m);
             log("Loaded positions of " + m.size() + " players");
@@ -228,7 +235,7 @@ public class ServerMain {
                 meta.seed = world.seed();
                 meta.chunkMap = world.exportChunks();
             } else {
-                meta.blocks = world.data();
+                meta.blocks = world.data().clone();
                 meta.chunks = world.cx;
             }
             meta.save(worldName);

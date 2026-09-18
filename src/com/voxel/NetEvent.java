@@ -21,6 +21,4 @@ public class NetEvent {
     public java.util.Map<Long, byte[]> chunkMap;  // edited chunks (infinite WORLD)
     public String name;            // player name (NAME/CHAT)
     public String text;            // chat message (CHAT)
-    public boolean premium;        // premium flag (NAME)
-    public boolean licensed;       // token verified against the backend (NAME)
 }

@@ -1,7 +1,7 @@
 package com.voxel;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Voxel world divided into vertical-column chunks of CHUNK x CHUNK. Height is
@@ -55,7 +55,7 @@ public class World {
         this.infinite = true; this.seed = seed; this.bedrockLayer = bedrockLayer;
         this.cx = 0; this.cz = 0; this.sx = 0; this.sz = 0;
         this.blocks = null;
-        this.chunkMap = new HashMap<>();
+        this.chunkMap = new ConcurrentHashMap<>();
         this.noise = new Noise(seed);
     }
 
@@ -68,7 +68,11 @@ public class World {
     public long seed() { return seed; }
 
     /** Loaded chunks (infinite world) — the ones generated near the player. */
-    public Map<Long, byte[]> exportChunks() { return chunkMap; }
+    public Map<Long, byte[]> exportChunks() {
+        Map<Long, byte[]> copy = new java.util.HashMap<>();
+        chunkMap.forEach((key, value) -> copy.put(key, value.clone()));
+        return copy;
+    }
     public void importChunk(int cx, int cz, byte[] data) { chunkMap.put(key(cx, cz), data); }
     public static int chunkCX(long k) { return (int) (k >> 32); }
     public static int chunkCZ(long k) { return (int) (long) k; }
@@ -122,9 +126,11 @@ public class World {
 
     /** Get or generate an infinite-world chunk. */
     private byte[] chunk(int cx, int cz) {
-        byte[] c = chunkMap.get(key(cx, cz));
-        if (c == null) { c = new byte[CHUNK * SY * CHUNK]; chunkMap.put(key(cx, cz), c); fillChunk(cx, cz, c); }
-        return c;
+        return chunkMap.computeIfAbsent(key(cx, cz), ignored -> {
+            byte[] c = new byte[CHUNK * SY * CHUNK];
+            fillChunk(cx, cz, c);
+            return c;
+        });
     }
 
     // ---- generation ----

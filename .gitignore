@@ -21,3 +21,7 @@ server.properties
 server.log
 PACMine-Server.jar
 *.pid
+
+# dedicated server runtime files
+players.dat
+plugins/

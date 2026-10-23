@@ -22,6 +22,10 @@ public class Main {
     private ChunkRenderer renderer;
     private LiquidSim liquidSim;   // null on multiplayer clients (server-authoritative)
 
+    // atmosphere: the fog colour always matches the sky so the horizon blends
+    private final float[] skyColor = {0.55f, 0.75f, 1.0f, 1.0f};
+    private static final float FOG_START = 48f, FOG_END = 150f;
+
     private void initLiquidSim() {
         liquidSim = new LiquidSim(world, (x, y, z, b) -> {
             renderer.markDirty(x, z);
@@ -941,6 +945,7 @@ public class Main {
             processNetEvents();   // apply incoming world/block/move updates
 
             if (inMenu) {
+                glDisable(GL_FOG);        // menus are drawn in screen space, never fogged
                 renderMenu();
                 glfwSwapBuffers(window);
                 glfwPollEvents();
@@ -994,15 +999,22 @@ public class Main {
             fpsAccum += dt; fpsFrames++;
             if (fpsAccum >= 0.5) { fps = fpsFrames / fpsAccum; fpsAccum = 0; fpsFrames = 0; }
 
-            // sky colour from time of day
+            // sky colour from time of day; the fog matches it, so distant
+            // terrain fades into the horizon instead of ending abruptly
             float lt = (float) light();
-            glClearColor(0.03f + (0.55f - 0.03f) * lt, 0.04f + (0.75f - 0.04f) * lt, 0.10f + (1.0f - 0.10f) * lt, 1f);
+            skyColor[0] = 0.03f + 0.52f * lt;
+            skyColor[1] = 0.04f + 0.71f * lt;
+            skyColor[2] = 0.10f + 0.90f * lt;
+            glClearColor(skyColor[0], skyColor[1], skyColor[2], 1f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
+            applyFog();
             renderer.render(player.x, player.z);
+            renderClouds(lt);
             renderDrops();
             if (!multiplayer) { renderZombies(); renderAnimals(); }
             renderRemotePlayers();
+            glDisable(GL_FOG);        // HUD and overlays must stay crisp
             drawHud();
             if (paused) drawPauseMenu();
             if (inventoryOpen) drawInventory();
@@ -1081,6 +1093,57 @@ public class Main {
         glRotatef(-player.pitch, 1, 0, 0);
         glRotatef(-player.yaw, 0, 1, 0);
         glTranslatef((float) -player.x, (float) -(player.y + Player.EYE), (float) -player.z);
+    }
+
+    /** Linear distance fog, tinted with the current sky colour. */
+    private void applyFog() {
+        glEnable(GL_FOG);
+        glFogi(GL_FOG_MODE, GL_LINEAR);
+        glFogf(GL_FOG_START, FOG_START);
+        glFogf(GL_FOG_END, FOG_END);
+        glFogfv(GL_FOG_COLOR, skyColor);
+    }
+
+    // ---- clouds: a cheap layer of translucent blocks high above the world ----
+    private static final float CLOUD_Y = 96f;
+    private static final int CLOUD_CELL = 10;     // block size of one cloud cell
+    private static final int CLOUD_RADIUS = 18;   // cells around the player (~180 blocks)
+
+    /** Deterministic cloud blobs; no simulation, no allocation per frame. */
+    private static boolean cloudAt(int gx, int gz) {
+        long h = gx * 374761393L + gz * 668265263L;
+        h = (h ^ (h >>> 13)) * 1274126177L;
+        h ^= (h >>> 16);
+        return (h & 0xFFF) < 0x380;   // ~22% of the sky is covered
+    }
+
+    private void renderClouds(float lt) {
+        int baseX = Math.floorDiv((int) Math.floor(player.x), CLOUD_CELL);
+        int baseZ = Math.floorDiv((int) Math.floor(player.z), CLOUD_CELL);
+        float shade = 0.25f + 0.75f * lt;
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_CULL_FACE);          // visible from below as well
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(false);
+        glColor4f(shade, shade, shade, 0.55f);
+        glBegin(GL_QUADS);
+        for (int cx = -CLOUD_RADIUS; cx <= CLOUD_RADIUS; cx++)
+            for (int cz = -CLOUD_RADIUS; cz <= CLOUD_RADIUS; cz++) {
+                int gx = baseX + cx, gz = baseZ + cz;
+                if (!cloudAt(gx, gz)) continue;
+                float x0 = gx * (float) CLOUD_CELL, z0 = gz * (float) CLOUD_CELL;
+                float x1 = x0 + CLOUD_CELL, z1 = z0 + CLOUD_CELL;
+                glVertex3f(x0, CLOUD_Y, z0);
+                glVertex3f(x1, CLOUD_Y, z0);
+                glVertex3f(x1, CLOUD_Y, z1);
+                glVertex3f(x0, CLOUD_Y, z1);
+            }
+        glEnd();
+        glDepthMask(true);
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+        glEnable(GL_TEXTURE_2D);
     }
 
     private void drawHud() {
@@ -1773,12 +1836,13 @@ public class Main {
             flip,
             superMode ? ("SUPER  wave " + wave + ", zombies " + zombies.size())
                       : (multiplayer ? ("Multiplayer: " + (isHost ? "host" : "client") + ", players " + (remotePlayers.size() + 1)) : "Singleplayer"),
+            renderer != null ? ("Chunks: " + renderer.chunksDrawn() + " drawn, " + renderer.chunksCulled() + " culled") : "",
         };
         float sz = 2f, lh = 9 * sz, x = 8, y = 12; // top-left corner
         glDisable(GL_TEXTURE_2D);
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glColor4f(0, 0, 0, 0.5f);
-        quad(x - 4, y - 4, x + 320, y + lines.length * lh + 4);
+        quad(x - 4, y - 4, x + 380, y + lines.length * lh + 4);
         glColor3f(0.8f, 1f, 0.7f);
         for (String ln : lines) { Font5x7.draw(ln, x, y, sz); y += lh; }
         // keep GL_BLEND on: the held sword is drawn after this and needs alpha
@@ -2232,38 +2296,95 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        if (args.length > 0 && args[0].startsWith("--server.")) {
-            runDedicatedServer(args[0].substring("--server.".length()));
+        if (args.length > 0 && args[0].startsWith("--server")) {
+            runDedicatedServer();
+            return;
+        }
+        if (args.length > 0 && args[0].equals("--smoke")) {
+            int frames = args.length > 1 ? Integer.parseInt(args[1]) : 90;
+            String shot = args.length > 2 ? args[2] : null;
+            float yaw = args.length > 3 ? Float.parseFloat(args[3]) : 35f;
+            float pitch = args.length > 4 ? Float.parseFloat(args[4]) : -10f;
+            new Main().smokeTest(frames, shot, yaw, pitch);
             return;
         }
         new Main().run();
     }
 
-    /** Headless dedicated server: ./run.sh --server.{ip|localhost} */
-    private static void runDedicatedServer(String bind) {
+    /**
+     * Headless dedicated server. Delegates to ServerMain so the game binary and
+     * the standalone server jar share one implementation (server.properties,
+     * autosave, plugins, console) instead of slowly drifting apart.
+     */
+    private static void runDedicatedServer() {
+        System.out.println("Dedicated server mode: starting ServerMain (see server.properties)");
         try {
-            World world = new World(System.nanoTime(), 8, true);
-            java.util.Queue<NetEvent> sink = new java.util.concurrent.ConcurrentLinkedQueue<>();
-            NetServer s = new NetServer(world, true, sink);
-            s.setDedicated();
-            s.start();
-            System.out.println("=== PACMine dedicated server ===");
-            System.out.println("Listening on port " + NetServer.PORT);
-            try {
-                String lan = java.net.InetAddress.getLocalHost().getHostAddress();
-                System.out.println("LAN address: " + lan);
-            } catch (Exception ignored) {}
-            if (bind.equalsIgnoreCase("localhost"))
-                System.out.println("Mode: local/LAN — players join via 'localhost' (same PC) or your 192.168.x.x address.");
-            else
-                System.out.println("Mode: public — players join via '" + bind + "' (IP or domain pointing to it). Forward port " + NetServer.PORT + ".");
-            System.out.println("Press Ctrl+C to stop.");
-            while (true) {
-                sink.clear();                 // drop host-facing events; nobody is hosting locally
-                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-            }
-        } catch (IOException e) {
+            ServerMain.main(new String[0]);
+        } catch (Exception e) {
             System.err.println("Server failed to start: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Development smoke test: build a small world, render N frames, print GL
+     * info and timing, then exit. Normal single-player launch is unchanged.
+     */
+    private void smokeTest(int frames, String shotPath, float yaw, float pitch) {
+        init();
+        world = new World(20260101L, 4, true);
+        renderer = new ChunkRenderer(world, atlas);
+        initLiquidSim();
+        int[] dry = world.findDrySpawn(world.sx / 2, world.sz / 2, 32);
+        player = new Player(world, dry[0] + 0.5, dry[1], dry[2] + 0.5);
+        player.yaw = yaw; player.pitch = pitch;
+        initSlots();
+        inMenu = false;
+        System.out.println("SMOKE: " + glGetString(GL_VERSION) + " | " + glGetString(GL_RENDERER));
+        long t0 = System.nanoTime();
+        for (int i = 0; i < frames && !glfwWindowShouldClose(window); i++) {
+            float lt = (float) light();
+            skyColor[0] = 0.03f + 0.52f * lt;
+            skyColor[1] = 0.04f + 0.71f * lt;
+            skyColor[2] = 0.10f + 0.90f * lt;
+            glClearColor(skyColor[0], skyColor[1], skyColor[2], 1f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            setupCamera();
+            applyFog();
+            renderer.render(player.x, player.z);
+            renderClouds(lt);
+            glDisable(GL_FOG);
+            drawHud();
+            if (shotPath != null && i == frames - 1) saveScreenshot(shotPath);   // before the swap
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+            player.yaw += 1.5f;
+        }
+        double ms = (System.nanoTime() - t0) / 1_000_000.0;
+        System.out.printf(java.util.Locale.US,
+            "SMOKE OK: %d frames, %.1f ms total, %.2f ms/frame, chunks %d drawn / %d culled%n",
+            frames, ms, frames > 0 ? ms / frames : 0, renderer.chunksDrawn(), renderer.chunksCulled());
+        glfwFreeCallbacks(window);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
+    /** Read the framebuffer (bottom-up) and write it as a PNG, for smoke tests. */
+    private void saveScreenshot(String path) {
+        int w = width, h = height;
+        java.nio.ByteBuffer buf = org.lwjgl.BufferUtils.createByteBuffer(w * h * 4);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int i = ((h - 1 - y) * w + x) * 4;
+                int r = buf.get(i) & 0xff, g = buf.get(i + 1) & 0xff, b = buf.get(i + 2) & 0xff;
+                img.setRGB(x, y, (r << 16) | (g << 8) | b);
+            }
+        try {
+            javax.imageio.ImageIO.write(img, "png", new java.io.File(path));
+            System.out.println("SMOKE screenshot: " + path);
+        } catch (Exception e) {
+            System.err.println("screenshot failed: " + e.getMessage());
         }
     }
 }

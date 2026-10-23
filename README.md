@@ -19,6 +19,9 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font
 - **Local profiles**: choose a nickname in the launcher; multiplayer servers display that local nickname without an online account or license
 - Invisible walls at the world edges
+- **Ambient occlusion + distance fog** — corners and cliffs shade naturally, far terrain fades into the sky
+- **Frustum culling** — chunks behind the camera are never drawn or rebuilt
+- A layer of blocky clouds above the world (dimmed at night)
 
 ## Controls
 | Action | Key |
@@ -79,6 +82,23 @@ A small Swing launcher downloads, builds and runs the latest version from GitHub
   - `Zombie.java` — mob entity & AI
   - `Font5x7.java` — bitmap font for menu text
 - `assets/` — PNG textures (16×16)
+
+## Development
+
+Headless checks for the parts that don't need OpenGL (world generation, save
+format, encryption, crafting, frustum maths) — exits non-zero on failure:
+
+```bash
+java -cp out com.voxel.SelfTest
+```
+
+Render smoke test: builds a small world, draws N frames, prints the GL renderer
+and per-frame timing, and can save a screenshot:
+
+```bash
+java -cp "out:lib/*" com.voxel.Main --smoke 60 shot.png   # Linux/macOS
+java -cp "out;lib/*" com.voxel.Main --smoke 60 shot.png   # Windows
+```
 
 ## License
 [Apache 2.0](LICENSE) — versions up to v0.1.5.5 were released under MIT.

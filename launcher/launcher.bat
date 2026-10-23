@@ -1,11 +1,13 @@
 @echo off
+rem Always recompile: javac is fast, and a stale class file after editing
+rem LauncherMain.java is a much worse surprise than one extra second at start.
 cd /d "%~dp0"
 if not exist out mkdir out
-if not exist "out\LauncherMain.class" goto compile
-rem recompile if source is newer is hard in batch; just always compile if class missing
-goto run
-:compile
 echo Compiling launcher...
 javac -d out LauncherMain.java
-:run
+if errorlevel 1 (
+  echo LAUNCHER BUILD FAILED
+  pause
+  exit /b 1
+)
 java -cp out LauncherMain

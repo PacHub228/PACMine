@@ -50,9 +50,10 @@ public class TextureAtlas {
     }
 
     private int[] loadTile(String dir, String name, int idx) {
-        // name variants / fallbacks: wood_top/wood_side fall back to wood.png
-        String[] candidates = {name + ".png",
-                               name.startsWith("wood") ? "wood.png" : name + ".png"};
+        // name variants / fallbacks: wood_top/wood_side fall back to the single wood.png
+        String[] candidates = name.startsWith("wood")
+                ? new String[]{name + ".png", "wood.png"}
+                : new String[]{name + ".png"};
         for (String c : candidates) {
             File f = new File(dir, c);
             if (!f.exists()) continue;

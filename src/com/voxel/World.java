@@ -74,6 +74,21 @@ public class World {
         return copy;
     }
     public void importChunk(int cx, int cz, byte[] data) { chunkMap.put(key(cx, cz), data); }
+
+    /**
+     * Raw chunk storage for hot paths (network join): returns the live array
+     * instead of cloning the whole world, generating the chunk on demand if it
+     * was never touched. Null for finite worlds.
+     */
+    public byte[] chunkData(long k) {
+        if (!infinite) return null;
+        byte[] c = chunkMap.get(k);
+        if (c != null) return c;
+        byte[] fresh = new byte[CHUNK * SY * CHUNK];
+        fillChunk(chunkCX(k), chunkCZ(k), fresh);
+        byte[] race = chunkMap.putIfAbsent(k, fresh);
+        return race != null ? race : fresh;
+    }
     public static int chunkCX(long k) { return (int) (k >> 32); }
     public static int chunkCZ(long k) { return (int) (long) k; }
     /** Chunk-map key for the chunk containing block (x,z). */
@@ -154,6 +169,7 @@ public class World {
         for (int lx = 0; lx < CHUNK; lx++)
             for (int lz = 0; lz < CHUNK; lz++)
                 genColumn(noise, bx0 + lx, bz0 + lz, bedrockLayer, bx0, bz0, c);
+        plantNeighbourTrees(bx0, bz0, c);
         // deterministic caves + ores per chunk
         java.util.Random rnd = new java.util.Random(seed ^ (key(cx, cz) * 0x9E3779B97F4A7C15L));
         carveCaves(rnd, bx0, bz0, CHUNK, CHUNK, bx0, bz0, c);
@@ -162,17 +178,43 @@ public class World {
     }
 
     /**
-     * Generate a single terrain column. If `c` is non-null we write into that
-     * chunk array (infinite, clipped to chunk); otherwise into the flat array.
+     * Trees rooted just outside a chunk still have to paint their canopy into
+     * it, otherwise every tree that grows near a chunk border loses the half
+     * of its crown that lies on the other side. Walk a 2-block margin around
+     * the chunk, replant any tree whose trunk is outside it, and let put()
+     * clip the rest — the result is seamless canopies across chunk borders.
      */
-    private void genColumn(Noise n, int x, int z, boolean bedrock, int bx0, int bz0, byte[] c) {
+    private void plantNeighbourTrees(int bx0, int bz0, byte[] c) {
+        for (int gx = bx0 - 2; gx < bx0 + CHUNK + 2; gx++)
+            for (int gz = bz0 - 2; gz < bz0 + CHUNK + 2; gz++) {
+                boolean inside = gx >= bx0 && gx < bx0 + CHUNK && gz >= bz0 && gz < bz0 + CHUNK;
+                if (inside) continue;                       // already planted by genColumn
+                int h = heightAt(noise, gx, gz);
+                if (h < 20) continue;                       // sand/beach, no trees
+                if (noise.noise(gx * 1.7 + 13, gz * 1.7 + 7) > 0.8)
+                    plantTree(gx, h + 1, gz, bx0, bz0, c);  // clipped to this chunk by put()
+            }
+    }
+
+    /** Surface height of a column, purely from noise (no block storage involved). */
+    public static int heightAt(Noise n, int x, int z) {
         double e = 0;
         e += n.noise(x * 0.015, z * 0.015) * 1.0;
         e += n.noise(x * 0.04, z * 0.04) * 0.4;
         e += n.noise(x * 0.09, z * 0.09) * 0.15;
         e /= 1.55;
         int h = (int) (24 + e * 16);
-        if (h < 1) h = 1; if (h >= SY) h = SY - 1;
+        if (h < 1) h = 1;
+        if (h >= SY) h = SY - 1;
+        return h;
+    }
+
+    /**
+     * Generate a single terrain column. If `c` is non-null we write into that
+     * chunk array (infinite, clipped to chunk); otherwise into the flat array.
+     */
+    private void genColumn(Noise n, int x, int z, boolean bedrock, int bx0, int bz0, byte[] c) {
+        int h = heightAt(n, x, z);
         for (int y = 0; y <= h; y++) {
             byte b;
             if (y == 0 && bedrock) b = BEDROCK;

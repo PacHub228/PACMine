@@ -318,15 +318,16 @@ public class NetServer {
                 synchronized (out) {
                     out.writeByte(T_ASSIGN); out.writeInt(id);
                     if (world.infinite) {
-                        // seed + edited chunks only; the client regenerates the rest
+                        // seed + edited chunks only; the client regenerates the rest.
+                        // NOTE: no exportChunks() here — that deep-cloned the whole world
+                        // (hundreds of MB on a pregenerated server) for every join.
                         out.writeByte(T_WORLD_INF);
                         out.writeLong(world.seed());
                         out.writeBoolean(protection);
-                        java.util.Map<Long, byte[]> all = world.exportChunks();
                         java.util.List<Long> keys = new java.util.ArrayList<>(editedChunks);
                         out.writeInt(keys.size());
                         for (long k : keys) {
-                            byte[] ch = all.get(k);
+                            byte[] ch = world.chunkData(k);
                             out.writeLong(k);
                             out.writeInt(ch.length);
                             out.write(ch);

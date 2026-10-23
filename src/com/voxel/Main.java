@@ -1480,7 +1480,7 @@ public class Main {
     }
 
     private void button(float x, float y, float w, float h, String label, boolean enabled, Runnable action) {
-        Ui.button(x, y, w, h, label, enabled && inRect(x, y, w, h), enabled, h * 0.075f);
+        Ui.button(x, y, w, h, label, enabled && inRect(x, y, w, h), enabled, h * 0.062f);
         btns.add(new Btn(x, y, w, h, enabled, action));
     }
 
@@ -1488,7 +1488,7 @@ public class Main {
     private void textField(float x, float y, float w, float h, StringBuilder value, int id) {
         boolean focused = focusField == id;
         boolean blink = (glfwGetTime() % 1.0) < 0.5;
-        Ui.field(x, y, w, h, value.toString(), focused, h * 0.075f, blink);
+        Ui.field(x, y, w, h, value.toString(), focused, h * 0.062f, blink);
         fieldRects.add(new float[]{x, y, w, h, id});
     }
 
@@ -1504,7 +1504,7 @@ public class Main {
     }
 
     private void menuTitle(String title) {
-        Ui.labelCentered(title, width / 2f, height * 0.055f, 5.5f * gui(), 0.92f, 0.95f, 0.98f, 1f);
+        Ui.labelCentered(title, width / 2f, height * 0.05f, 4.6f * gui(), 0.92f, 0.95f, 0.98f, 1f);
     }
 
     private void menuClick() {
@@ -1584,15 +1584,18 @@ public class Main {
     // ---------------- screens ----------------
 
     private void screenMain() {
-        float u = gui(), w = btnW(), h = btnH(), g = btnGap();
+        float u = gui(), w = btnW() * 1.35f, h = btnH(), g = btnGap();
         float cx = width / 2f, x = cx - w / 2, y = height * 0.46f;
 
         float ts = 10 * u;
         String logo = "PACMINE";
-        float lx = cx - Font5x7.width(logo, ts) / 2, ly = height * 0.14f;
-        Ui.label(logo, lx + ts * 0.6f, ly + ts * 0.6f, ts, 0.12f, 0.12f, 0.15f, 0.9f);   // hard shadow
-        Ui.label(logo, lx, ly, ts, 0.93f, 0.95f, 0.92f, 1f);
-        float logoW = Font5x7.width(logo, ts);
+        float logoW = Text.width(logo, ts);
+        float lx = cx - logoW / 2, ly = height * 0.14f;
+        glColor4f(0.05f, 0.05f, 0.08f, 0.85f);                 // one hard shadow, no double blur
+        Text.draw(logo, lx + ts * 0.30f, ly + ts * 0.30f, ts);
+        glColor4f(0.93f, 0.95f, 0.92f, 1f);
+        Text.draw(logo, lx, ly, ts);
+        glColor4f(1, 1, 1, 1);
         splash(cx, ly + 7 * ts + 6 * u, u);
 
         button(x, y, w, h, "ОДИНОЧНАЯ ИГРА", true, this::openWorldList);
@@ -1602,9 +1605,9 @@ public class Main {
         button(x + hw + g, y + 2 * (h + g), hw, h, "ДОСТИЖЕНИЯ", true, () -> screen = Screen.ACH);
         button(x, y + 3 * (h + g), w, h, "ВЫХОД", true, () -> glfwSetWindowShouldClose(window, true));
 
-        Ui.label("PACMINE " + BuildInfo.VERSION, 10 * u, height - 13 * u, 1.7f * u, 1, 1, 1, 0.40f);
-        Ui.label("BY PACHUB / PACPERLAR", width - 10 * u - Font5x7.width("BY PACHUB / PACPERLAR", 1.7f * u),
-                 height - 13 * u, 1.7f * u, 1, 1, 1, 0.30f);
+        Ui.label("PACMINE " + BuildInfo.VERSION, 10 * u, height - 20 * u, 1.5f * u, 1, 1, 1, 0.40f);
+        Ui.label("BY PACHUB / PACPERLAR", width - 10 * u - Text.width("BY PACHUB / PACPERLAR", 1.5f * u),
+                 height - 20 * u, 1.5f * u, 1, 1, 1, 0.30f);
     }
 
     /** Rotated yellow splash text under the logo, Minecraft style. */
@@ -1616,7 +1619,7 @@ public class Main {
         glPushMatrix();
         glTranslatef(x, y, 0);
         glRotatef(-6, 0, 0, 1);
-        Ui.label(text, -Font5x7.width(text, px) / 2, 0, px, 1f, 0.95f, 0.25f, 1f);
+        Ui.label(text, -Text.width(text, px) / 2, 0, px, 1f, 0.95f, 0.25f, 1f);
         glPopMatrix();
     }
 
@@ -1694,7 +1697,7 @@ public class Main {
         for (int i = 0; i < tabs.length; i++) {
             final int t = i;
             float tx = cx - w / 2 + i * (tabW + g);
-            Ui.button(tx, ty, tabW, h, tabs[i], inRect(tx, ty, tabW, h), true, h * 0.075f);
+            Ui.button(tx, ty, tabW, h, tabs[i], inRect(tx, ty, tabW, h), true, h * 0.062f);
             if (createTab == i) {
                 Ui.color(0.72f, 0.9f, 0.45f, 1f);
                 Ui.quad(tx, ty + h + 1, tx + tabW, ty + h + 3);
@@ -2069,7 +2072,7 @@ public class Main {
             float[] r = pauseRect(i);
             String label = i == 0 ? "ПРОДОЛЖИТЬ" : i == 1 ? "СОХРАНИТЬ МИР" : "ВЫЙТИ В МЕНЮ";
             boolean enabled = i != 1 || !multiplayer;
-            Ui.button(r[0], r[1], w, h, label, inRect(r[0], r[1], w, h), enabled, h * 0.075f);
+            Ui.button(r[0], r[1], w, h, label, inRect(r[0], r[1], w, h), enabled, h * 0.062f);
         }
 
         glDisable(GL_BLEND);
@@ -2128,9 +2131,9 @@ public class Main {
             String line = (String) entry[0];
             glDisable(GL_TEXTURE_2D);
             glColor4f(0, 0, 0, 0.45f * alpha);
-            quad(x - 4, y - 3, x + Font5x7.width(line, ls) + 6, y + 7 * ls + 3);
+            quad(x - 4, y - 3, x + Text.width(line, ls) + 6, y + 7 * ls + 3);
             glColor4f(1, 1, 1, alpha);
-            Font5x7.draw(line, x, y, ls);
+            Text.draw(line, x, y, ls);
         }
         // input line
         if (chatOpen) {
@@ -2138,9 +2141,9 @@ public class Main {
             float y = yBase + 8;
             glDisable(GL_TEXTURE_2D);
             glColor4f(0, 0, 0, 0.65f);
-            quad(x - 4, y - 4, x + Math.max(260, Font5x7.width(line, ls) + 10), y + 7 * ls + 4);
+            quad(x - 4, y - 4, x + Math.max(260, Text.width(line, ls) + 10), y + 7 * ls + 4);
             glColor4f(0.85f, 0.95f, 0.6f, 1f);
-            Font5x7.draw(line, x, y, ls);
+            Text.draw(line, x, y, ls);
         }
     }
 
@@ -2150,7 +2153,7 @@ public class Main {
         float alpha = (float) Math.min(1, toastTimer);   // fade in the last second
         String head = "ACHIEVEMENT UNLOCKED!";
         float hs = 2.2f, ts = 3.2f;
-        float w = Math.max(Font5x7.width(head, hs), Font5x7.width(toastTitle, ts)) + 40;
+        float w = Math.max(Text.width(head, hs), Text.width(toastTitle, ts)) + 40;
         float h = 7 * hs + 7 * ts + 26;
         float x0 = width / 2f - w / 2, y0 = 18;
         glDisable(GL_TEXTURE_2D);
@@ -2159,9 +2162,9 @@ public class Main {
         glColor4f(0.85f, 0.95f, 0.6f, alpha);           // accent border line
         quad(x0, y0, x0 + w, y0 + 3);
         glColor4f(0.85f, 0.95f, 0.6f, alpha);
-        Font5x7.draw(head, width / 2f - Font5x7.width(head, hs) / 2, y0 + 9, hs);
+        Text.draw(head, width / 2f - Text.width(head, hs) / 2, y0 + 9, hs);
         glColor4f(1, 1, 1, alpha);
-        Font5x7.draw(toastTitle, width / 2f - Font5x7.width(toastTitle, ts) / 2, y0 + 9 + 7 * hs + 8, ts);
+        Text.draw(toastTitle, width / 2f - Text.width(toastTitle, ts) / 2, y0 + 9 + 7 * hs + 8, ts);
     }
 
     /** F3 debug overlay: world/player info, time of day, next day/night flip. */
@@ -2185,7 +2188,7 @@ public class Main {
         glColor4f(0, 0, 0, 0.5f);
         quad(x - 4, y - 4, x + 380, y + lines.length * lh + 4);
         glColor3f(0.8f, 1f, 0.7f);
-        for (String ln : lines) { Font5x7.draw(ln, x, y, sz); y += lh; }
+        for (String ln : lines) { Text.draw(ln, x, y, sz); y += lh; }
         // keep GL_BLEND on: the held sword is drawn after this and needs alpha
     }
 
@@ -2201,7 +2204,7 @@ public class Main {
             float[] sc = worldToScreen(p[0], p[1] + 1.95, p[2]); // above the head
             if (sc == null) continue;
             float ps = 2.5f;
-            float w = Font5x7.width(nm, ps);
+            float w = Text.width(nm, ps);
             float checkW = 0;
             float x = sc[0] - (w + checkW) / 2, y = sc[1];
             // backdrop
@@ -2210,7 +2213,7 @@ public class Main {
             quad(x - 4, y - 3, x + w + checkW + 4, y + 7 * ps + 3);
             // name
             glColor3f(1, 1, 1);
-            Font5x7.draw(nm, x, y, ps);
+            Text.draw(nm, x, y, ps);
         }
     }
 
@@ -2335,11 +2338,11 @@ public class Main {
         glDisable(GL_TEXTURE_2D);
         if (count > 0) {
             String c = String.valueOf(count);
-            float cs = 2.0f, cw = Font5x7.width(c, cs);
+            float cs = 2.0f, cw = Text.width(c, cs);
             glColor4f(0, 0, 0, 0.75f);
-            Font5x7.draw(c, x + INV_CELL - cw - 4, y + INV_CELL - 7 * cs - 4, cs);
+            Text.draw(c, x + INV_CELL - cw - 4, y + INV_CELL - 7 * cs - 4, cs);
             glColor3f(1, 1, 1);
-            Font5x7.draw(c, x + INV_CELL - cw - 5, y + INV_CELL - 7 * cs - 5, cs);
+            Text.draw(c, x + INV_CELL - cw - 5, y + INV_CELL - 7 * cs - 5, cs);
         }
     }
 
@@ -2402,9 +2405,9 @@ public class Main {
         quad(px, py, px + bt, py + ph); quad(px + pw - bt, py, px + pw, py + ph);
         glColor4f(0.20f, 0.25f, 0.32f, 1f); quad(px + bt, py + bt, px + pw - bt, py + 56);
         glColor4f(0.70f, 0.92f, 0.42f, 1f); quad(px + 14, py + 15, px + 19, py + 40);
-        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("КРАФТ", px + 30 + 2, py + 13 + 2, 3);
-        glColor3f(0.90f, 0.98f, 0.68f); Font5x7.draw("КРАФТ", px + 30, py + 13, 3);
-        glColor4f(1, 1, 1, 0.55f); Font5x7.draw("ВЫБЕРИ РЕЦЕПТ", px + 30, py + 38, 1.35f);
+        glColor4f(0, 0, 0, 0.5f); Text.draw("КРАФТ", px + 30 + 2, py + 13 + 2, 3);
+        glColor3f(0.90f, 0.98f, 0.68f); Text.draw("КРАФТ", px + 30, py + 13, 3);
+        glColor4f(1, 1, 1, 0.55f); Text.draw("ВЫБЕРИ РЕЦЕПТ", px + 30, py + 38, 1.35f);
 
         for (int i = 0; i < Recipes.ALL.length; i++) {
             Recipes.Recipe r = Recipes.ALL[i];
@@ -2420,7 +2423,7 @@ public class Main {
             String nm = r.tool != Recipes.TOOL_NONE ? Recipes.toolName(r.tool)
                                                     : blockName(r.output) + " x" + r.outCount;
             glColor4f(1, 1, 1, ok ? 1f : 0.4f);
-            Font5x7.draw(nm, px + 20, y + 5, 1.85f);
+            Text.draw(nm, px + 20, y + 5, 1.85f);
             // ingredients
             StringBuilder need = new StringBuilder();
             for (int k = 0; k < r.inputs.length; k++) {
@@ -2428,14 +2431,14 @@ public class Main {
                 need.append(blockName(r.inputs[k])).append(" ").append(r.counts[k]);
             }
             glColor4f(1, 1, 1, ok ? 0.68f : 0.32f);
-            Font5x7.draw(need.toString(), px + 20, y + 25, 1.35f);
+            Text.draw(need.toString(), px + 20, y + 25, 1.35f);
             String state = ok ? "ГОТОВО" : "НУЖНЫ РЕСУРСЫ";
             glColor4f(ok ? 0.68f : 0.72f, ok ? 0.95f : 0.50f, ok ? 0.44f : 0.50f, ok ? 0.92f : 0.70f);
             float ss = 1.15f;
-            Font5x7.draw(state, px + pw - 16 - Font5x7.width(state, ss), y + 6, ss);
+            Text.draw(state, px + pw - 16 - Text.width(state, ss), y + 6, ss);
         }
         glColor4f(1, 1, 1, 0.45f);
-        Font5x7.draw("КЛИКНИ ПО РЕЦЕПТУ", px + 16, py + ph - 16, 1.4f);
+        Text.draw("КЛИКНИ ПО РЕЦЕПТУ", px + 16, py + ph - 16, 1.4f);
     }
 
     // ---------------- furnace screen ----------------
@@ -2495,7 +2498,7 @@ public class Main {
         drawSlot(x, y, type, count, false, mouseX >= x && mouseX <= x + FCELL && mouseY >= y && mouseY <= y + FCELL);
         glDisable(GL_TEXTURE_2D);
         glColor4f(1, 1, 1, 0.5f);
-        Font5x7.draw(label, x + FCELL + 10, y + FCELL / 2 - 6, 1.6f);
+        Text.draw(label, x + FCELL + 10, y + FCELL / 2 - 6, 1.6f);
     }
 
     private void drawFurnace() {
@@ -2508,8 +2511,8 @@ public class Main {
         float bt = 2;
         quad(px, py, px + FURN_W, py + bt); quad(px, py + FURN_H - bt, px + FURN_W, py + FURN_H);
         quad(px, py, px + bt, py + FURN_H); quad(px + FURN_W - bt, py, px + FURN_W, py + FURN_H);
-        glColor4f(0, 0, 0, 0.5f); Font5x7.draw("ПЕЧКА", px + 16 + 2, py + 17, 3);
-        glColor3f(0.85f, 0.95f, 0.6f); Font5x7.draw("ПЕЧКА", px + 16, py + 15, 3);
+        glColor4f(0, 0, 0, 0.5f); Text.draw("ПЕЧКА", px + 16 + 2, py + 17, 3);
+        glColor3f(0.85f, 0.95f, 0.6f); Text.draw("ПЕЧКА", px + 16, py + 15, 3);
 
         float sx = furnSlotX();
         drawFurnaceSlot(sx, furnInY(), f.inType, f.inCount, "ПЛАВИТЬ");
@@ -2544,15 +2547,15 @@ public class Main {
         quad(px, py, px + bt, py + ph); quad(px + pw - bt, py, px + pw, py + ph);
 
         glColor4f(0, 0, 0, 0.5f);
-        Font5x7.draw("INVENTORY", px + INV_PAD + 2, py + 15 + 2, 3);
+        Text.draw("INVENTORY", px + INV_PAD + 2, py + 15 + 2, 3);
         glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw("INVENTORY", px + INV_PAD, py + 15, 3);
+        Text.draw("INVENTORY", px + INV_PAD, py + 15, 3);
 
         int hoverSlot = slotAtMouse();
         if (hoverSlot >= 0 && slotType[hoverSlot] != World.AIR) {
             String nm = BLOCK_NAMES[slotType[hoverSlot]];
             glColor4f(1, 1, 1, 0.85f);
-            Font5x7.draw(nm, px + pw - INV_PAD - Font5x7.width(nm, 2.4f), py + 17, 2.4f);
+            Text.draw(nm, px + pw - INV_PAD - Text.width(nm, 2.4f), py + 17, 2.4f);
         }
 
         for (int r = 0; r < INV_GRID_ROWS; r++)
@@ -2581,8 +2584,8 @@ public class Main {
             glEnd();
             glDisable(GL_TEXTURE_2D);
             String c = String.valueOf(carryCount);
-            glColor4f(0, 0, 0, 0.75f); Font5x7.draw(c, mx + s / 2 - 12, my + s / 2 - 12, 2);
-            glColor3f(1, 1, 1);        Font5x7.draw(c, mx + s / 2 - 13, my + s / 2 - 13, 2);
+            glColor4f(0, 0, 0, 0.75f); Text.draw(c, mx + s / 2 - 12, my + s / 2 - 12, 2);
+            glColor3f(1, 1, 1);        Text.draw(c, mx + s / 2 - 13, my + s / 2 - 13, 2);
         }
 
         glDisable(GL_BLEND);
@@ -2619,7 +2622,7 @@ public class Main {
                 glDisable(GL_TEXTURE_2D);
                 if (slotCount[i] > 0) {
                     glColor3f(1, 1, 1);
-                    Font5x7.draw(String.valueOf(slotCount[i]), sx + 4, y0 + slot - 14, 1.5f);
+                    Text.draw(String.valueOf(slotCount[i]), sx + 4, y0 + slot - 14, 1.5f);
                 }
             }
         }
@@ -2646,7 +2649,8 @@ public class Main {
             String shot = args.length > 2 ? args[2] : null;
             float yaw = args.length > 3 ? Float.parseFloat(args[3]) : 35f;
             float pitch = args.length > 4 ? Float.parseFloat(args[4]) : -10f;
-            new Main().smokeTest(frames, shot, yaw, pitch);
+            boolean debug = args.length > 5 && args[5].equals("debug");
+            new Main().smokeTest(frames, shot, yaw, pitch, debug);
             return;
         }
         if (args.length > 0 && args[0].equals("--ui")) {
@@ -2720,7 +2724,7 @@ public class Main {
      * Development smoke test: build a small world, render N frames, print GL
      * info and timing, then exit. Normal single-player launch is unchanged.
      */
-    private void smokeTest(int frames, String shotPath, float yaw, float pitch) {
+    private void smokeTest(int frames, String shotPath, float yaw, float pitch, boolean debug) {
         init();
         world = new World(20260101L, 4, true);
         if (renderer != null) renderer.dispose();   // free the previous world's display lists
@@ -2731,6 +2735,7 @@ public class Main {
         player.yaw = yaw; player.pitch = pitch;
         initSlots();
         inMenu = false;
+        showDebug = debug;
         System.out.println("SMOKE: " + glGetString(GL_VERSION) + " | " + glGetString(GL_RENDERER));
         long t0 = System.nanoTime();
         for (int i = 0; i < frames && !glfwWindowShouldClose(window); i++) {

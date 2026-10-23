@@ -48,15 +48,16 @@ public final class Ui {
         quad(x, y, x + w, y + b); quad(x, y + h - b, x + w, y + h);
         quad(x, y, x + b, y + h); quad(x + w - b, y, x + w, y + h);
 
-        float maxPx = (w - 3 * b) / Math.max(1f, label.length() * 6 - 1);
+        // shrink to fit using the real font metrics (not the old 5x7 grid)
+        float maxPx = (w - 6 * b) / Math.max(1f, Text.width(label, 1f));
         float s = Math.min(px, maxPx);
-        float tw = Font5x7.width(label, s), th = 7 * s;
+        float tw = Text.width(label, s), th = 7 * s;
         float tx = x + (w - tw) / 2, ty = y + (h - th) / 2;
         float off = Math.max(1, s * 0.35f);
         color(0, 0, 0, enabled ? 0.55f : 0.35f);
-        Font5x7.draw(label, tx + off, ty + off, s);
+        Text.draw(label, tx + off, ty + off, s);
         if (enabled) color(1, 1, 1, 1); else color(0.60f, 0.60f, 0.62f, 1);
-        Font5x7.draw(label, tx, ty, s);
+        Text.draw(label, tx, ty, s);
         color(1, 1, 1, 1);
     }
 
@@ -70,12 +71,12 @@ public final class Ui {
         quad(x, y, x + w, y + b); quad(x, y + h - b, x + w, y + h);
         quad(x, y, x + b, y + h); quad(x + w - b, y, x + w, y + h);
 
-        float s = Math.min(px, (h - 4 * b) / 7f);
+        float s = Math.min(px, (h - 5 * b) / 7f);
         float ty = y + (h - 7 * s) / 2;
         color(1, 1, 1, value.isEmpty() && !focused ? 0.35f : 1f);
-        Font5x7.draw(value, x + 3 * b, ty, s);
+        Text.draw(value, x + 3 * b, ty, s);
         if (focused && caretOn) {
-            float cx = x + 3 * b + Font5x7.width(value, s) + Math.max(1, s * 0.4f);
+            float cx = x + 3 * b + Text.width(value, s) + Math.max(1, s * 0.4f);
             color(0.95f, 0.95f, 0.85f, 0.9f);
             quad(cx, ty - b, cx + Math.max(1.5f, s * 0.5f), ty + 7 * s + b);
         }
@@ -87,15 +88,15 @@ public final class Ui {
                              float r, float g, float b, float a) {
         float off = Math.max(1, px * 0.35f);
         color(0, 0, 0, a * 0.55f);
-        Font5x7.draw(text, x + off, y + off, px);
+        Text.draw(text, x + off, y + off, px);
         color(r, g, b, a);
-        Font5x7.draw(text, x, y, px);
+        Text.draw(text, x, y, px);
         color(1, 1, 1, 1);
     }
 
     public static void labelCentered(String text, float cx, float y, float px,
                                      float r, float g, float b, float a) {
-        label(text, cx - Font5x7.width(text, px) / 2, y, px, r, g, b, a);
+        label(text, cx - Text.width(text, px) / 2, y, px, r, g, b, a);
     }
 
     /** Semi-transparent dark panel used behind every list. */

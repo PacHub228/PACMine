@@ -2,6 +2,17 @@
 
 ## Unreleased — Minecraft-style menu overhaul
 
+### Text
+- Replaced the hand-drawn 5x7 bitmap font with a proper rasterised typeface:
+  `Text.java` builds two texture atlases from the first available system font
+  (Segoe UI, Tahoma, Verdana, DejaVu Sans, Arial) — 32 px for UI text and 96 px
+  for titles — and draws strings as textured quads with real Cyrillic
+  letterforms, proportional spacing and `° % — … №`.
+- Text is scaled by cap height, so every existing size call keeps its meaning;
+  labels shrink to fit their buttons using the real font metrics.
+- The old bitmap font is kept as an automatic fallback (`-Dpacmine.bitmapfont=true`
+  forces it) for systems without AWT fonts.
+
 ### UI
 - Rewritten menu system with a small immediate-mode widget toolkit
   (`Ui.java`): bevelled grey buttons, inset text fields, list rows, panels and

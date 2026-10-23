@@ -100,7 +100,7 @@ public class Font5x7 {
     public static float width(String s, float px) { return s.length() * 6 * px - px; }
 
     /** Draw text with top-left at (x,y); each font pixel is px wide. Assumes texturing off. */
-    public static void draw(String s, float x, float y, float px) {
+    public static void drawBitmap(String s, float x, float y, float px) {
         // One batch for the whole string: a menu title used to emit one
         // glBegin/glEnd pair per lit pixel (hundreds of draw calls per frame).
         glBegin(GL_QUADS);

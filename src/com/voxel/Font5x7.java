@@ -79,6 +79,9 @@ public class Font5x7 {
         put('Я', 0b01111,0b10001,0b10001,0b01111,0b00101,0b01001,0b10001);
         put('Ё', 0b01010,0b11111,0b10000,0b11110,0b10000,0b10000,0b11111);
         put('-', 0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000);
+        put('—', 0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000);
+        put('%', 0b11001,0b11010,0b00100,0b01000,0b10110,0b00110,0b00000);
+        put('°', 0b01100,0b10010,0b10010,0b01100,0b00000,0b00000,0b00000);
         put('+', 0b00000,0b00100,0b00100,0b11111,0b00100,0b00100,0b00000);
         put('/', 0b00001,0b00010,0b00010,0b00100,0b01000,0b01000,0b10000);
         put('0', 0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110);
@@ -98,6 +101,9 @@ public class Font5x7 {
 
     /** Draw text with top-left at (x,y); each font pixel is px wide. Assumes texturing off. */
     public static void draw(String s, float x, float y, float px) {
+        // One batch for the whole string: a menu title used to emit one
+        // glBegin/glEnd pair per lit pixel (hundreds of draw calls per frame).
+        glBegin(GL_QUADS);
         for (int i = 0; i < s.length(); i++) {
             int[] g = G.get(Character.toUpperCase(s.charAt(i)));
             if (g != null) {
@@ -105,13 +111,12 @@ public class Font5x7 {
                     for (int col = 0; col < 5; col++)
                         if ((g[row] & (1 << (4 - col))) != 0) {
                             float qx = x + col * px, qy = y + row * px;
-                            glBegin(GL_QUADS);
                             glVertex2f(qx, qy); glVertex2f(qx + px, qy);
                             glVertex2f(qx + px, qy + px); glVertex2f(qx, qy + px);
-                            glEnd();
                         }
             }
             x += 6 * px;
         }
+        glEnd();
     }
 }

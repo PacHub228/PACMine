@@ -18,6 +18,7 @@ A small voxel sandbox game written in Java with [LWJGL](https://www.lwjgl.org/) 
 - **Animals** (pig, cow, chicken) roam in daylight; they drop a healing heart when killed
 - Start menu (PLAY / QUIT) with a tiny built-in bitmap font
 - **Local profiles**: choose a nickname in the launcher; multiplayer servers display that local nickname without an online account or license
+- **Minecraft-style menus**: world list, create-world screen with Игра/Мир/Прочее tabs (name, seed, mode, size, bonus chest), server list with add/direct-connect, options screen (render distance, FOV, sensitivity, clouds, fog) saved to `~/.pacmine`
 - Invisible walls at the world edges
 - **Ambient occlusion + distance fog** — corners and cliffs shade naturally, far terrain fades into the sky
 - **Frustum culling** — chunks behind the camera are never drawn or rebuilt
@@ -98,6 +99,13 @@ and per-frame timing, and can save a screenshot:
 ```bash
 java -cp "out:lib/*" com.voxel.Main --smoke 60 shot.png   # Linux/macOS
 java -cp "out;lib/*" com.voxel.Main --smoke 60 shot.png   # Windows
+```
+
+Menu screenshots without starting a game (handy when working on the UI):
+`MAIN`, `WORLDS`, `CREATE`, `MP`, `DIRECT`, `ADD_SERVER`, `SETTINGS`, `ACH`, `CREDITS`.
+
+```bash
+java -cp "out;lib/*" com.voxel.Main --ui CREATE create.png
 ```
 
 ## License

@@ -927,6 +927,9 @@ public class LauncherMain {
         if (!"https".equalsIgnoreCase(c.getURL().getProtocol())) throw new IOException("refusing non-HTTPS download");
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", "PACMine-Launcher");
+        // without timeouts a stalled mirror hangs the launcher forever
+        c.setConnectTimeout(15000);
+        c.setReadTimeout(30000);
         try (InputStream in = c.getInputStream()) {
             copyLimited(in, dest);
         }

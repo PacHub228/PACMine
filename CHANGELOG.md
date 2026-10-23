@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — Minecraft-style menu overhaul
+
+### UI
+- Rewritten menu system with a small immediate-mode widget toolkit
+  (`Ui.java`): bevelled grey buttons, inset text fields, list rows, panels and
+  labels with hard pixel shadows, all scaled to the window height.
+- **Main menu**: big PACMINE logo, animated yellow splash, Одиночная игра /
+  Сетевая игра / Настройки / Достижения / Выход.
+- **Выбор мира**: world list with size, date and selection, plus Играть /
+  Создать / Удалить / Назад.
+- **Создание мира** with three tabs (Игра / Мир / Прочее): world name, game
+  mode, mobs, world protection, seed, finite/infinite type, size, bonus chest.
+  Seeds are accepted as numbers or hashed from text, like Minecraft.
+- **Сетевая игра**: saved server list (`~/.pacmine/servers.txt`), connect,
+  direct address, add/delete server, host game.
+- **Настройки**: render distance (2–12 chunks), FOV, mouse sensitivity,
+  clouds and fog toggles — persisted in `~/.pacmine/settings.properties` and
+  actually wired into the renderer, camera and mouse look.
+- Restyled pause menu; font now batches a whole string into one draw call and
+  gained `%`, `°` and `—` glyphs.
+
+### Fixes
+- **Closing the window now saves the world** (Alt+F4 / X used to lose the
+  session progress).
+- The dedicated server installs a shutdown hook, so Ctrl+C / SIGTERM saves the
+  world instead of dropping it.
+- **No more display-list leak**: `ChunkRenderer.dispose()` is called whenever a
+  world is replaced, and on shutdown.
+- Infinite worlds respawn at a dry spawn instead of hard-coded (0,0), which
+  could be open ocean.
+- The launcher's downloads now have connect/read timeouts instead of hanging
+  forever on a stalled mirror.
+
 ## Unreleased — graphics, performance and fixes
 
 ### Graphics

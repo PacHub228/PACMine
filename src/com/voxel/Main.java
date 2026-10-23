@@ -40,7 +40,7 @@ public class Main {
     private boolean firstMouse = true;
 
     // UI state
-    private enum Screen { MAIN, WORLDS, WORLD_MENU, CREATE, CREDITS, MP, JOIN, ACH }
+    private enum Screen { MAIN, WORLDS, CREATE, MP, DIRECT, ADD_SERVER, SETTINGS, ACH, CREDITS }
     private String selectedWorld = null;
 
     // multiplayer
@@ -51,7 +51,6 @@ public class Main {
     private final java.util.concurrent.ConcurrentLinkedQueue<NetEvent> netQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final java.util.Map<Integer, double[]> remotePlayers = new java.util.HashMap<>(); // id -> {x,y,z,yaw,pitch}
     private final java.util.Map<Integer, String> remoteNames = new java.util.HashMap<>();
-    private final StringBuilder ipInput = new StringBuilder("localhost");
     private double moveSendTimer = 0;
 
     // local profile; no online account or license is required
@@ -62,6 +61,26 @@ public class Main {
     private java.util.List<String> worldList = new java.util.ArrayList<>();
     private int newChunks = 8;             // world size (chunks) for creation
     private String worldName = null;       // currently loaded world
+
+    // ---- menu state (Minecraft-style screens) ----
+    private int createTab = 0;             // 0 = игра, 1 = мир, 2 = прочее
+    private final StringBuilder createName = new StringBuilder();
+    private final StringBuilder createSeed = new StringBuilder();
+    private boolean createInfinite = false; // type of the world being created
+    private boolean bonusChest = true;
+    private int focusField = 0;            // 0 = none, else TextField id
+    private final java.util.List<String[]> servers = new java.util.ArrayList<>(); // {name, host}
+    private int selectedServer = -1;
+    private final StringBuilder serverNameInput = new StringBuilder();
+    private final StringBuilder serverAddressInput = new StringBuilder();
+    private final StringBuilder directInput = new StringBuilder("localhost");
+    private final java.util.List<float[]> fieldRects = new java.util.ArrayList<>(); // {x,y,w,h,id}
+
+    // ---- settings (persisted in ~/.pacmine/settings.properties) ----
+    private int renderDistance = 6;
+    private float fov = 70f;
+    private float sensitivity = 0.12f;
+    private boolean cloudsOn = true, fogOn = true;
 
     // settings (used when creating a world)
     private boolean hostileMobs = true;
@@ -206,6 +225,10 @@ public class Main {
     public void run() {
         init();
         loop();
+        // closing the window (X / Alt+F4 / quit button) must not throw the session away
+        if (!multiplayer && worldName != null) {
+            try { saveWorld(); } catch (IOException e) { System.err.println("save on exit failed: " + e.getMessage()); }
+        }
         glfwFreeCallbacks(window);
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -241,10 +264,15 @@ public class Main {
                 if ((latin || cyr) && chatInput.length() < 80) chatInput.append((char) cp);
                 return;
             }
-            if (inMenu && screen == Screen.JOIN && cp < 128) {
-                char ch = (char) cp;
-                if (Character.isLetterOrDigit(ch) || ch == '.' || ch == ':' || ch == '-')
-                    ipInput.append(ch);
+            if (inMenu && focusField != 0 && cp >= 32) {
+                StringBuilder field = activeField();
+                if (field != null && field.length() < 32) {
+                    char ch = (char) cp;
+                    boolean ok = Character.isLetterOrDigit(ch) || ch == '.' || ch == ':' || ch == '-'
+                              || ch == '_' || (ch == ' ' && focusField == 3);   // spaces only in server names
+                    if (ok) field.append(ch);
+                }
+                return;
             }
         });
 
@@ -288,6 +316,7 @@ public class Main {
         chickBody = TextureAtlas.loadStandalone("assets/chicken.png");
         chickFace = TextureAtlas.loadStandalone("assets/chicken_face.png");
         loadProfile();
+        loadSettings();
         updateTitle();
     }
 
@@ -304,11 +333,16 @@ public class Main {
     }
 
     /** Create a brand-new world of the chosen size and start playing it. chunks==1 => infinite. */
-    private void newWorld(int chunks) {
+    private void newWorld(int chunks) { newWorld(chunks, null, System.nanoTime(), false); }
+
+    /** Create a world with an explicit name/seed (menu) and start playing it. chunks<=1 => infinite. */
+    private void newWorld(int chunks, String name, long seed, boolean giveBonus) {
         boolean inf = chunks <= 1;
-        world = inf ? World.createInfinite(System.nanoTime(), protection)
-                    : new World(System.nanoTime(), chunks, protection);
+        world = inf ? World.createInfinite(seed, protection)
+                    : new World(seed, chunks, protection);
+        if (renderer != null) renderer.dispose();   // free the previous world's display lists
         renderer = new ChunkRenderer(world, atlas);
+        renderer.setRenderDistance(renderDistance);
         initLiquidSim();
         // fresh world: never spawn in water — walk outward until dry land
         int[] dry = world.findDrySpawn(inf ? 0 : world.sx / 2, inf ? 0 : world.sz / 2, 64);
@@ -321,9 +355,15 @@ public class Main {
         furnaces.clear(); openFurnace = null;
         zombies.clear(); drops.clear(); animals.clear();
         initSlots();
+        if (giveBonus) {                           // the "bonus chest" starter kit
+            addItem(World.WOOD, 8);
+            addItem(World.PLANKS, 4);
+            addItem(World.STONE, 8);
+            addItem(World.COAL, 4);
+        }
         timeOfDay = 0.25;
         wave = 0; waveTimer = 0;
-        worldName = SaveGame.nextName();
+        worldName = (name != null && SaveGame.validName(name)) ? name : SaveGame.nextName();
         try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
         enterGame();
     }
@@ -341,7 +381,8 @@ public class Main {
             } else {
                 world = new World(s.chunks, s.blocks);
             }
-            renderer = new ChunkRenderer(world, atlas);
+            if (renderer != null) renderer.dispose();   // free the previous world's display lists
+        renderer = new ChunkRenderer(world, atlas);
             initLiquidSim();
             player = new Player(world, s.px, s.py, s.pz);
             player.yaw = s.yaw; player.pitch = s.pitch; player.health = s.health;
@@ -370,7 +411,12 @@ public class Main {
                 for (int i = 0; i < HOT; i++)
                     if (slotType[i] < s.inv.length) slotCount[i] = s.inv[slotType[i]];
             }
-            spawnX = world.infinite ? 0 : world.sx / 2; spawnY = (int) s.py; spawnZ = world.infinite ? 0 : world.sz / 2;
+            if (world.infinite) {                       // dry spawn: the origin may be open ocean
+                int[] dry = world.findDrySpawn(0, 0, 32);
+                spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
+            } else {
+                spawnX = world.sx / 2; spawnY = (int) s.py; spawnZ = world.sz / 2;
+            }
             zombies.clear();
             for (double[] a : s.zombies) {
                 Zombie z = new Zombie(world, a[0], a[1], a[2], a.length > 5 ? (int) a[5] : Zombie.NORMAL);
@@ -432,6 +478,7 @@ public class Main {
     private void hostGame() {
         int hostChunks = Math.max(6, newChunks);   // multiplayer needs a real finite world (no infinite)
         world = new World(System.nanoTime(), hostChunks, protection);
+        if (renderer != null) renderer.dispose();   // free the previous world's display lists
         renderer = new ChunkRenderer(world, atlas);
         initLiquidSim();
         int[] dry = world.findDrySpawn(world.sx / 2, world.sz / 2, 64);
@@ -483,7 +530,8 @@ public class Main {
                         world = new World(e.chunks, e.blocks);
                         spawnX = world.sx / 2; spawnZ = world.sz / 2;
                     }
-                    renderer = new ChunkRenderer(world, atlas);
+                    if (renderer != null) renderer.dispose();   // free the previous world's display lists
+        renderer = new ChunkRenderer(world, atlas);
                     liquidSim = null;   // clients don't simulate: the server owns the flow
                     protection = e.protection;
                     int sy = World.SY - 1;
@@ -545,6 +593,10 @@ public class Main {
 
     /** Respawn the player in the current world after death (world is kept). */
     private void resetPlayer() {
+        if (world.infinite) {                       // endless worlds: never respawn in the ocean
+            int[] dry = world.findDrySpawn(spawnX, spawnZ, 48);
+            spawnX = dry[0]; spawnY = dry[1]; spawnZ = dry[2];
+        }
         // recompute a safe surface height at the spawn column
         int sy = World.SY - 1;
         while (sy > 0) {
@@ -671,9 +723,10 @@ public class Main {
     private void onKey(long w, int key, int sc, int action, int mods) {
         if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
             if (inMenu) {
-                if (screen == Screen.MAIN) glfwSetWindowShouldClose(w, true);
-                else if (screen == Screen.CREATE || screen == Screen.WORLD_MENU) screen = Screen.WORLDS;
-                else if (screen == Screen.JOIN) screen = Screen.MP;
+                if (focusField != 0) focusField = 0;                     // leave the text field first
+                else if (screen == Screen.MAIN) glfwSetWindowShouldClose(w, true);
+                else if (screen == Screen.CREATE) screen = Screen.WORLDS;
+                else if (screen == Screen.DIRECT || screen == Screen.ADD_SERVER) screen = Screen.MP;
                 else screen = Screen.MAIN;
             } else if (chatOpen) {
                 chatOpen = false; chatInput.setLength(0);
@@ -687,10 +740,17 @@ public class Main {
             }
             return;
         }
-        if (inMenu && screen == Screen.JOIN && action == GLFW_PRESS) {
-            if (key == GLFW_KEY_BACKSPACE && ipInput.length() > 0) ipInput.deleteCharAt(ipInput.length() - 1);
-            else if (key == GLFW_KEY_ENTER) joinGame(ipInput.toString().trim());
-            return;
+        if (inMenu && action == GLFW_PRESS) {
+            StringBuilder field = activeField();
+            if (field != null) {
+                if (key == GLFW_KEY_BACKSPACE && field.length() > 0) { field.deleteCharAt(field.length() - 1); return; }
+                if (key == GLFW_KEY_ENTER) {
+                    if (screen == Screen.ADD_SERVER) addServer();
+                    else if (screen == Screen.DIRECT) joinGame(directInput.toString().trim());
+                    return;
+                }
+                if (key == GLFW_KEY_TAB && screen == Screen.CREATE) { createTab = (createTab + 1) % 3; return; }
+            }
         }
         if (!inMenu && key == GLFW_KEY_F3 && action == GLFW_PRESS) { showDebug = !showDebug; return; }
         if (chatOpen && action == GLFW_PRESS) {
@@ -1008,9 +1068,9 @@ public class Main {
             glClearColor(skyColor[0], skyColor[1], skyColor[2], 1f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setupCamera();
-            applyFog();
+            if (fogOn) applyFog(); else glDisable(GL_FOG);
             renderer.render(player.x, player.z);
-            renderClouds(lt);
+            if (cloudsOn) renderClouds(lt);
             renderDrops();
             if (!multiplayer) { renderZombies(); renderAnimals(); }
             renderRemotePlayers();
@@ -1084,8 +1144,8 @@ public class Main {
     private void setupCamera() {
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        double fov = player.sprinting ? 78 : 70, aspect = (double) width / height, near = 0.1, far = 300;
-        double top = Math.tan(Math.toRadians(fov / 2)) * near;
+        double fovDeg = fov + (player.sprinting ? 8 : 0), aspect = (double) width / height, near = 0.1, far = 300;
+        double top = Math.tan(Math.toRadians(fovDeg / 2)) * near;
         glFrustum(-top * aspect, top * aspect, -top, top, near, far);
 
         glMatrixMode(GL_MODELVIEW);
@@ -1393,80 +1453,84 @@ public class Main {
         glTexCoord2f(u, v); glVertex3f(x, y, z);
     }
 
-    // a centred button stack: index 0 is the top button
-    private float[] menuRect(int i) {
-        float bw = 320, bh = 52, cx = width / 2f, y = height * 0.26f + i * 64;
-        return new float[]{cx - bw/2, y, cx + bw/2, y + bh};
-    }
-    private float[] playRect()        { return menuRect(0); }
-    private float[] multiplayerRect()  { return menuRect(1); }
-    private float[] achRect()         { return menuRect(2); }
-    private float[] creditsRect()     { return menuRect(3); }
-    private float[] quitRect()        { return menuRect(4); }
-    private float[] backRect()        { return menuRect(6); }
+    // ---------------- menu skeleton (Minecraft-style screens) ----------------
 
-    private boolean inRect(float[] r, double px, double py) {
-        return px >= r[0] && px <= r[2] && py >= r[1] && py <= r[3];
+    private static final class Btn {
+        final float x, y, w, h;
+        final boolean enabled;
+        final Runnable action;
+        Btn(float x, float y, float w, float h, boolean enabled, Runnable action) {
+            this.x = x; this.y = y; this.w = w; this.h = h; this.enabled = enabled; this.action = action;
+        }
+    }
+    private final java.util.List<Btn> btns = new java.util.ArrayList<>();
+
+    /** GUI unit: every widget scales with the window height, like Minecraft's GUI scale. */
+    private float gui()    { return Math.max(1f, height / 480f); }
+    private float btnW()   { return 200 * gui(); }
+    private float btnH()   { return 20 * gui(); }
+    private float btnGap() { return 4 * gui(); }
+
+    private boolean inRect(float x, float y, float w, float h) {
+        return mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
     }
 
-    private void menuClick() {
-        switch (screen) {
-            case MAIN:
-                if (inRect(playRect(), mouseX, mouseY)) { worldList = SaveGame.list(); screen = Screen.WORLDS; }
-                else if (inRect(multiplayerRect(), mouseX, mouseY)) screen = Screen.MP;
-                else if (inRect(achRect(), mouseX, mouseY)) screen = Screen.ACH;
-                else if (inRect(creditsRect(), mouseX, mouseY)) screen = Screen.CREDITS;
-                else if (inRect(quitRect(), mouseX, mouseY)) glfwSetWindowShouldClose(window, true);
-                break;
-            case MP:
-                if (inRect(menuRect(0), mouseX, mouseY)) hostGame();
-                else if (inRect(menuRect(1), mouseX, mouseY)) screen = Screen.JOIN;
-                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
-                break;
-            case JOIN:
-                if (inRect(menuRect(2), mouseX, mouseY)) joinGame(ipInput.toString().trim());
-                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MP;
-                break;
-            case WORLDS:
-                for (int i = 0; i < worldList.size(); i++)
-                    if (inRect(menuRect(i), mouseX, mouseY)) { selectedWorld = worldList.get(i); screen = Screen.WORLD_MENU; return; }
-                if (inRect(menuRect(worldList.size()), mouseX, mouseY)) screen = Screen.CREATE;
-                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
-                break;
-            case WORLD_MENU:
-                if (inRect(menuRect(0), mouseX, mouseY)) loadWorld(selectedWorld);
-                else if (inRect(menuRect(1), mouseX, mouseY)) {
-                    SaveGame.delete(selectedWorld);
-                    worldList = SaveGame.list();
-                    screen = Screen.WORLDS;
-                } else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
-                break;
-            case CREATE:
-                if (inRect(sizeMinusRect(), mouseX, mouseY)) newChunks = Math.max(1, newChunks - 1);
-                else if (inRect(sizePlusRect(), mouseX, mouseY)) newChunks = Math.min(24, newChunks + 1);
-                else if (inRect(menuRect(1), mouseX, mouseY)) hostileMobs = !hostileMobs;
-                else if (inRect(menuRect(2), mouseX, mouseY)) cycleMode();
-                else if (inRect(menuRect(3), mouseX, mouseY)) protection = !protection;
-                else if (inRect(menuRect(4), mouseX, mouseY)) newWorld(newChunks);
-                else if (inRect(backRect(), mouseX, mouseY)) screen = Screen.WORLDS;
-                break;
-            case CREDITS:
-            case ACH:
-                if (inRect(backRect(), mouseX, mouseY)) screen = Screen.MAIN;
-                break;
+    private void hotspot(float x, float y, float w, float h, Runnable action) {
+        btns.add(new Btn(x, y, w, h, true, action));
+    }
+
+    private void button(float x, float y, float w, float h, String label, boolean enabled, Runnable action) {
+        Ui.button(x, y, w, h, label, enabled && inRect(x, y, w, h), enabled, h * 0.075f);
+        btns.add(new Btn(x, y, w, h, enabled, action));
+    }
+
+    /** Text field that registers itself for click-to-focus. */
+    private void textField(float x, float y, float w, float h, StringBuilder value, int id) {
+        boolean focused = focusField == id;
+        boolean blink = (glfwGetTime() % 1.0) < 0.5;
+        Ui.field(x, y, w, h, value.toString(), focused, h * 0.075f, blink);
+        fieldRects.add(new float[]{x, y, w, h, id});
+    }
+
+    private StringBuilder activeField() {
+        switch (focusField) {
+            case 1: return createName;
+            case 2: return createSeed;
+            case 3: return serverNameInput;
+            case 4: return serverAddressInput;
+            case 5: return directInput;
+            default: return null;
         }
     }
 
-    private float[] sizeMinusRect() { float[] r = menuRect(0); float mid=(r[0]+r[2])/2; return new float[]{r[0], r[1], mid, r[3]}; }
-    private float[] sizePlusRect()  { float[] r = menuRect(0); float mid=(r[0]+r[2])/2; return new float[]{mid, r[1], r[2], r[3]}; }
+    private void menuTitle(String title) {
+        Ui.labelCentered(title, width / 2f, height * 0.055f, 5.5f * gui(), 0.92f, 0.95f, 0.98f, 1f);
+    }
+
+    private void menuClick() {
+        for (Btn b : btns) {
+            if (b.enabled && inRect(b.x, b.y, b.w, b.h)) { focusField = 0; b.action.run(); return; }
+        }
+        for (float[] f : fieldRects) {
+            if (inRect(f[0], f[1], f[2], f[3])) { focusField = (int) f[4]; return; }
+        }
+        focusField = 0;
+    }
+
+    // ---- pause menu ----
+    private float[] pauseRect(int i) {
+        float w = btnW(), h = btnH(), g = btnGap();
+        float x = width / 2f - w / 2, y = height * 0.38f + i * (h + g);
+        return new float[]{x, y, w, h};
+    }
 
     private void pauseClick() {
-        if (inRect(menuRect(0), mouseX, mouseY)) {                 // continue
+        if (inRect(pauseRect(0)[0], pauseRect(0)[1], btnW(), btnH())) {                 // continue
             paused = false; grabCursor();
-        } else if (inRect(menuRect(1), mouseX, mouseY)) {          // save world (single-player only)
+        } else if (inRect(pauseRect(1)[0], pauseRect(1)[1], btnW(), btnH())) {          // save world
             if (!multiplayer)
                 try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
-        } else if (inRect(menuRect(2), mouseX, mouseY)) {          // (save and) quit to menu
+        } else if (inRect(pauseRect(2)[0], pauseRect(2)[1], btnW(), btnH())) {          // save and quit
             if (multiplayer) leaveMultiplayer();
             else try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
             paused = false; inMenu = true; screen = Screen.MAIN;
@@ -1477,7 +1541,6 @@ public class Main {
     private void renderMenu() {
         glClearColor(0.10f, 0.12f, 0.18f, 1f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glClearColor(0.55f, 0.75f, 1.0f, 1f); // restore sky for the game
 
         glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
         glOrtho(0, width, height, 0, -1, 1);
@@ -1490,112 +1553,23 @@ public class Main {
 
         drawMenuBackground();
 
-        String title;
+        btns.clear();
+        fieldRects.clear();
         switch (screen) {
-            case WORLDS: title = "SELECT WORLD"; break;
-            case WORLD_MENU: title = selectedWorld; break;
-            case CREATE: title = "NEW WORLD"; break;
-            case CREDITS: title = "CREDITS"; break;
-            case MP: title = "MULTIPLAYER"; break;
-            case JOIN: title = "JOIN GAME"; break;
-            case ACH: title = "ACHIEVEMENTS"; break;
-            default: title = "PACMINE";
-        }
-        float ts = 9;
-        float tx = width/2f - Font5x7.width(title, ts)/2, ty = height * 0.12f;
-        glColor4f(0, 0, 0, 0.6f);
-        Font5x7.draw(title, tx + ts * 0.7f, ty + ts * 0.7f, ts);   // hard pixel shadow
-        glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw(title, tx, ty, ts);
-        if (screen == Screen.MAIN) {
-            String foot = "BY PACHUB / PACPERLAR";
-            glColor4f(1, 1, 1, 0.35f);
-            Font5x7.draw(foot, 12, height - 26, 2);
-        }
-        if (menuNotice != null && menuNoticeTime > 0) {
-            menuNoticeTime -= 1.0 / 60;
-            float a = (float) Math.min(1, menuNoticeTime);
-            glColor4f(1f, 0.45f, 0.4f, a);
-            Font5x7.draw(menuNotice, width/2f - Font5x7.width(menuNotice, 3)/2, ty + 8.5f * ts, 3);
+            case MAIN:       screenMain(); break;
+            case WORLDS:     screenWorlds(); break;
+            case CREATE:     screenCreate(); break;
+            case MP:         screenMultiplayer(); break;
+            case DIRECT:     screenDirect(); break;
+            case ADD_SERVER: screenAddServer(); break;
+            case SETTINGS:   screenSettings(); break;
+            case ACH:        screenAchievements(); break;
+            case CREDITS:    screenCredits(); break;
         }
 
-        switch (screen) {
-            case MAIN:
-                drawButton(playRect(),        "PLAY", 0.25f, 0.6f, 0.3f);
-                drawButton(multiplayerRect(), "MULTIPLAYER", 0.3f, 0.45f, 0.6f);
-                drawButton(achRect(),         "ACHIEVEMENTS " + Achievements.unlockedCount() + "/" + Achievements.ALL.length, 0.55f, 0.5f, 0.3f);
-                drawButton(creditsRect(),     "CREDITS", 0.45f, 0.4f, 0.55f);
-                drawButton(quitRect(),        "QUIT", 0.6f, 0.25f, 0.25f);
-                break;
-            case MP:
-                drawButton(menuRect(0), "HOST GAME", 0.25f, 0.6f, 0.3f);
-                drawButton(menuRect(1), "JOIN GAME", 0.3f, 0.45f, 0.6f);
-                drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            case JOIN:
-                glColor3f(0.9f, 0.9f, 0.95f);
-                String prompt = connecting ? "CONNECTING..." : "ENTER HOST IP";
-                Font5x7.draw(prompt, width/2f - Font5x7.width(prompt, 4)/2, height * 0.26f, 4);
-                String ipText = ipInput.toString().toUpperCase()
-                    + (!connecting && (glfwGetTime() % 1.0 < 0.5) ? "_" : "");
-                drawButton(menuRect(1), ipText, 0.2f, 0.2f, 0.25f);
-                drawButton(menuRect(2), "CONNECT", 0.25f, 0.6f, 0.3f);
-                drawButton(backRect(),  "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            case WORLDS:
-                for (int i = 0; i < worldList.size(); i++)
-                    drawButton(menuRect(i), worldList.get(i), 0.3f, 0.45f, 0.6f);
-                drawButton(menuRect(worldList.size()), "+ NEW WORLD", 0.25f, 0.55f, 0.3f);
-                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            case WORLD_MENU:
-                drawButton(menuRect(0), "PLAY", 0.25f, 0.6f, 0.3f);
-                drawButton(menuRect(1), "DELETE", 0.65f, 0.25f, 0.25f);
-                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            case CREATE:
-                drawButton(menuRect(0), "- SIZE " + (newChunks <= 1 ? "INFINITE" : String.valueOf(newChunks)) + " +", 0.3f, 0.4f, 0.55f);
-                drawButton(menuRect(1), "MOBS  " + onOff(hostileMobs), 0.3f, 0.4f, 0.55f);
-                drawButton(menuRect(2), "MODE  " + modeName(), 0.3f, 0.4f, 0.55f);
-                drawButton(menuRect(3), "PROTECT  " + onOff(protection), 0.3f, 0.4f, 0.55f);
-                drawButton(menuRect(4), "CREATE", 0.25f, 0.6f, 0.3f);
-                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            case ACH: {
-                float rowH = Math.min(34, (height * 0.55f) / Achievements.ALL.length);
-                float ls = rowH * 0.062f, ds = rowH * 0.045f;
-                float y = height * 0.24f;
-                float x = width / 2f - 260;
-                for (String[] a : Achievements.ALL) {
-                    boolean got = Achievements.has(a[0]);
-                    // status square
-                    glColor4f(got ? 0.4f : 0.2f, got ? 0.85f : 0.22f, got ? 0.35f : 0.26f, 1f);
-                    quad(x, y + 2, x + rowH - 10, y + rowH - 8);
-                    if (got) { glColor3f(0.9f, 1f, 0.85f); Font5x7.draw("V", x + (rowH - 10) / 2 - 3 * 1.2f, y + 5, 1.2f); }
-                    // title + description
-                    glColor4f(1, 1, 1, got ? 1f : 0.45f);
-                    Font5x7.draw(a[1], x + rowH + 2, y, ls);
-                    glColor4f(1, 1, 1, got ? 0.6f : 0.3f);
-                    Font5x7.draw(a[2], x + rowH + 2 + 210, y + rowH * 0.15f, ds);
-                    y += rowH;
-                }
-                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-                break;
-            }
-            case CREDITS:
-                String[] lines = {
-                    "A VOXEL SANDBOX GAME", "", "CREATED BY", "PACHUB/PACPERLAR",
-                    "BUILT USING CLAUDE", "", "THANKS FOR PLAYING"
-                };
-                float cs = 4;
-                glColor3f(0.9f, 0.9f, 0.95f);
-                float y = height * 0.30f;
-                for (String ln : lines) {
-                    if (!ln.isEmpty()) Font5x7.draw(ln, width/2f - Font5x7.width(ln, cs)/2, y, cs);
-                    y += 9 * cs;
-                }
-                drawButton(backRect(), "BACK", 0.5f, 0.4f, 0.25f);
-                break;
+        if (menuNotice != null && menuNoticeTime > 0) {
+            float a = (float) Math.min(1, menuNoticeTime);
+            Ui.labelCentered(menuNotice, width / 2f, height * 0.16f, 3.4f * gui(), 1f, 0.45f, 0.4f, a);
         }
 
         glDisable(GL_BLEND);
@@ -1606,6 +1580,408 @@ public class Main {
         glMatrixMode(GL_PROJECTION); glPopMatrix();
         glMatrixMode(GL_MODELVIEW);
     }
+
+    // ---------------- screens ----------------
+
+    private void screenMain() {
+        float u = gui(), w = btnW(), h = btnH(), g = btnGap();
+        float cx = width / 2f, x = cx - w / 2, y = height * 0.46f;
+
+        float ts = 10 * u;
+        String logo = "PACMINE";
+        float lx = cx - Font5x7.width(logo, ts) / 2, ly = height * 0.14f;
+        Ui.label(logo, lx + ts * 0.6f, ly + ts * 0.6f, ts, 0.12f, 0.12f, 0.15f, 0.9f);   // hard shadow
+        Ui.label(logo, lx, ly, ts, 0.93f, 0.95f, 0.92f, 1f);
+        float logoW = Font5x7.width(logo, ts);
+        splash(cx, ly + 7 * ts + 6 * u, u);
+
+        button(x, y, w, h, "ОДИНОЧНАЯ ИГРА", true, this::openWorldList);
+        button(x, y + h + g, w, h, "СЕТЕВАЯ ИГРА", true, this::openMultiplayer);
+        float hw = (w - g) / 2;
+        button(x, y + 2 * (h + g), hw, h, "НАСТРОЙКИ", true, () -> screen = Screen.SETTINGS);
+        button(x + hw + g, y + 2 * (h + g), hw, h, "ДОСТИЖЕНИЯ", true, () -> screen = Screen.ACH);
+        button(x, y + 3 * (h + g), w, h, "ВЫХОД", true, () -> glfwSetWindowShouldClose(window, true));
+
+        Ui.label("PACMINE " + BuildInfo.VERSION, 10 * u, height - 13 * u, 1.7f * u, 1, 1, 1, 0.40f);
+        Ui.label("BY PACHUB / PACPERLAR", width - 10 * u - Font5x7.width("BY PACHUB / PACPERLAR", 1.7f * u),
+                 height - 13 * u, 1.7f * u, 1, 1, 1, 0.30f);
+    }
+
+    /** Rotated yellow splash text under the logo, Minecraft style. */
+    private void splash(float x, float y, float u) {
+        double t = glfwGetTime();
+        float bounce = (float) (1.0 + 0.05 * Math.sin(t * 2.0));
+        String text = "СДЕЛАНО НА CLAUDE!";
+        float px = 2.2f * u * bounce;
+        glPushMatrix();
+        glTranslatef(x, y, 0);
+        glRotatef(-6, 0, 0, 1);
+        Ui.label(text, -Font5x7.width(text, px) / 2, 0, px, 1f, 0.95f, 0.25f, 1f);
+        glPopMatrix();
+    }
+
+    private void openWorldList() {
+        worldList = SaveGame.list();
+        selectedWorld = worldList.isEmpty() ? null : worldList.get(0);
+        screen = Screen.WORLDS;
+    }
+
+    private void openMultiplayer() {
+        loadServers();
+        screen = Screen.MP;
+    }
+
+    private void screenWorlds() {
+        float u = gui(), w = btnW() * 1.4f, h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("ВЫБОР МИРА");
+
+        float listW = w + 40 * u, listH = height * 0.40f;
+        float lx = cx - listW / 2, ly = height * 0.15f;
+        Ui.panel(lx, ly, listW, listH, 0.55f);
+
+        float rowH = 36 * u;
+        int visible = Math.max(1, (int) ((listH - 8 * u) / rowH));
+        if (worldList.isEmpty()) {
+            Ui.labelCentered("МИРОВ ПОКА НЕТ", cx, ly + listH / 2 - 4 * u, 2.2f * u, 1, 1, 1, 0.6f);
+        }
+        for (int i = 0; i < Math.min(visible, worldList.size()); i++) {
+            final String name = worldList.get(i);
+            float ry = ly + 4 * u + i * rowH;
+            boolean sel = name.equals(selectedWorld);
+            boolean hov = inRect(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u);
+            if (hov) hotspot(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u, () -> selectedWorld = name);
+            Ui.listRow(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u, sel, hov);
+            Ui.label(name, lx + 12 * u, ry + 5 * u, 2.1f * u, 1, 1, 1, 0.95f);
+            Ui.label(worldInfo(name), lx + 12 * u, ry + 21 * u, 1.3f * u, 1, 1, 1, 0.55f);
+        }
+
+        float by = ly + listH + 8 * u;
+        float bw = (listW - g) / 2;
+        button(cx - listW / 2, by, bw, h, "ИГРАТЬ", selectedWorld != null,
+               () -> { if (selectedWorld != null) loadWorld(selectedWorld); });
+        button(cx - listW / 2 + bw + g, by, bw, h, "СОЗДАТЬ", true, () -> {
+            createTab = 0;
+            if (createName.length() == 0) createName.append(SaveGame.nextName());
+            screen = Screen.CREATE;
+        });
+        button(cx - listW / 2, by + h + g, bw, h, "УДАЛИТЬ", selectedWorld != null, () -> {
+            if (selectedWorld == null) return;
+            SaveGame.delete(selectedWorld);
+            worldList = SaveGame.list();
+            selectedWorld = worldList.isEmpty() ? null : worldList.get(0);
+        });
+        button(cx - listW / 2 + bw + g, by + h + g, bw, h, "НАЗАД", true, () -> screen = Screen.MAIN);
+    }
+
+    /** Size + date under a world name. */
+    private String worldInfo(String name) {
+        java.io.File f = new java.io.File(SaveGame.DIR, name + ".pms");
+        if (!f.isFile()) return "";
+        long kb = Math.max(1, f.length() / 1024);
+        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("dd.MM.yyyy");
+        return kb + " КБ  " + fmt.format(new java.util.Date(f.lastModified()));
+    }
+
+    private void screenCreate() {
+        float u = gui(), w = btnW() * 1.6f, h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("СОЗДАНИЕ МИРА");
+
+        String[] tabs = {"ИГРА", "МИР", "ПРОЧЕЕ"};
+        float tabW = (w - 2 * g) / 3;
+        float ty = height * 0.16f;
+        for (int i = 0; i < tabs.length; i++) {
+            final int t = i;
+            float tx = cx - w / 2 + i * (tabW + g);
+            Ui.button(tx, ty, tabW, h, tabs[i], inRect(tx, ty, tabW, h), true, h * 0.075f);
+            if (createTab == i) {
+                Ui.color(0.72f, 0.9f, 0.45f, 1f);
+                Ui.quad(tx, ty + h + 1, tx + tabW, ty + h + 3);
+            }
+            hotspot(tx, ty, tabW, h, () -> createTab = t);
+        }
+
+        float y = ty + h + 16 * u;
+        if (createTab == 0) {
+            Ui.label("НАЗВАНИЕ МИРА", cx - w / 2, y, 1.6f * u, 1, 1, 1, 0.85f);
+            textField(cx - w / 2, y + 16 * u, w, h, createName, 1);
+            y += 16 * u + h + 10 * u;
+            optionRow(y, w, "РЕЖИМ", modeNameRu(), this::cycleMode); y += h + g;
+            optionRow(y, w, "МОБЫ", onOff(hostileMobs), () -> hostileMobs = !hostileMobs); y += h + g;
+            optionRow(y, w, "ЗАЩИТА", onOff(protection), () -> protection = !protection);
+        } else if (createTab == 1) {
+            Ui.label("КЛЮЧ ГЕНЕРАТОРА (СИД)", cx - w / 2, y, 1.7f * u, 1, 1, 1, 0.85f);
+            textField(cx - w / 2, y + 14 * u, w, h, createSeed, 2);
+            Ui.label("ПУСТО — СЛУЧАЙНОЕ ЗНАЧЕНИЕ", cx - w / 2, y + 14 * u + h + 3 * u,
+                     1.4f * u, 1, 1, 1, 0.45f);
+            y += 14 * u + h + 22 * u;
+            optionRow(y, w, "ТИП МИРА", createInfinite ? "БЕСКОНЕЧНЫЙ" : "КОНЕЧНЫЙ",
+                      () -> createInfinite = !createInfinite); y += h + g;
+            optionRow(y, w, "РАЗМЕР", createInfinite ? "—" : newChunks + " ЧАНКОВ", () -> {
+                if (createInfinite) return;
+                newChunks = newChunks >= 16 ? 4 : newChunks + 4;
+            });
+        } else {
+            optionRow(y, w, "БОНУСНЫЙ СУНДУК", onOff(bonusChest), () -> bonusChest = !bonusChest); y += h + g;
+            optionRow(y, w, "ОБЛАКА", onOff(cloudsOn), () -> { cloudsOn = !cloudsOn; applySettings(); }); y += h + g;
+            optionRow(y, w, "ТУМАН", onOff(fogOn), () -> { fogOn = !fogOn; applySettings(); }); y += h + g;
+            Ui.label("СТАРТОВЫЙ НАБОР: ДЕРЕВО, ДОСКИ, КАМЕНЬ, УГОЛЬ", cx - w / 2, y + 6 * u,
+                     1.3f * u, 1, 1, 1, 0.45f);
+        }
+
+        float by = height - 34 * u;
+        float bw = (w - g) / 2;
+        button(cx - w / 2, by, bw, h, "СОЗДАТЬ НОВЫЙ МИР", true, this::createWorldNow);
+        button(cx - w / 2 + bw + g, by, bw, h, "ОТМЕНА", true, () -> screen = Screen.WORLDS);
+    }
+
+    /** Cycling option: the whole row is one wide button, Minecraft style. */
+    private void optionRow(float y, float w, String label, String value, Runnable cycle) {
+        float h = btnH(), cx = width / 2f;
+        button(cx - w / 2, y, w, h, label + ": " + value, true, cycle);
+    }
+
+    private void screenMultiplayer() {
+        float u = gui(), w = btnW() * 1.4f, h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("СЕТЕВАЯ ИГРА");
+
+        float listW = w + 40 * u, listH = height * 0.32f;
+        float lx = cx - listW / 2, ly = height * 0.15f;
+        Ui.panel(lx, ly, listW, listH, 0.55f);
+
+        float rowH = 40 * u;
+        int visible = Math.max(1, (int) ((listH - 8 * u) / rowH));
+        if (servers.isEmpty()) {
+            Ui.labelCentered("СПИСОК СЕРВЕРОВ ПУСТ", cx, ly + listH / 2 - 4 * u, 2.2f * u, 1, 1, 1, 0.6f);
+        }
+        for (int i = 0; i < Math.min(visible, servers.size()); i++) {
+            final int idx = i;
+            String[] srv = servers.get(i);
+            float ry = ly + 4 * u + i * rowH;
+            boolean sel = selectedServer == i;
+            boolean hov = inRect(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u);
+            if (hov) hotspot(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u, () -> selectedServer = idx);
+            Ui.listRow(lx + 4 * u, ry, listW - 8 * u, rowH - 2 * u, sel, hov);
+            Ui.label(srv[0], lx + 12 * u, ry + 5 * u, 2 * u, 1, 1, 1, 0.95f);
+            Ui.label(srv[1], lx + 12 * u, ry + 20 * u, 1.3f * u, 1, 1, 1, 0.55f);
+        }
+
+        float by = ly + listH + 8 * u;
+        float bw = (listW - g) / 2;
+        button(cx - listW / 2, by, bw, h, "ПОДКЛЮЧИТЬСЯ", selectedServer >= 0, () -> {
+            if (selectedServer >= 0 && selectedServer < servers.size()) joinGame(servers.get(selectedServer)[1]);
+        });
+        button(cx - listW / 2 + bw + g, by, bw, h, "ПО АДРЕСУ", true, () -> {
+            directInput.setLength(0); directInput.append("localhost");
+            focusField = 5; screen = Screen.DIRECT;
+        });
+        button(cx - listW / 2, by + h + g, bw, h, "ДОБАВИТЬ", true, () -> {
+            serverNameInput.setLength(0); serverAddressInput.setLength(0);
+            focusField = 3; screen = Screen.ADD_SERVER;
+        });
+        button(cx - listW / 2 + bw + g, by + h + g, bw, h, "УДАЛИТЬ", selectedServer >= 0, () -> {
+            if (selectedServer < 0 || selectedServer >= servers.size()) return;
+            servers.remove(selectedServer);
+            selectedServer = servers.isEmpty() ? -1 : Math.min(selectedServer, servers.size() - 1);
+            saveServers();
+        });
+        button(cx - listW / 2, by + 2 * (h + g), bw, h, "ХОСТИТЬ ИГРУ", true, this::hostGame);
+        button(cx - listW / 2 + bw + g, by + 2 * (h + g), bw, h, "НАЗАД", true, () -> screen = Screen.MAIN);
+    }
+
+    private void screenDirect() {
+        float u = gui(), w = btnW(), h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("ПОДКЛЮЧЕНИЕ ПО АДРЕСУ");
+        Ui.label("АДРЕС СЕРВЕРА", cx - w / 2, height * 0.32f, 2 * u, 1, 1, 1, 0.85f);
+        textField(cx - w / 2, height * 0.32f + 10 * u, w, h, directInput, 5);
+        float bw = (w - g) / 2;
+        button(cx - w / 2, height * 0.48f, bw, h, "ПОДКЛЮЧИТЬСЯ", true,
+               () -> joinGame(directInput.toString().trim()));
+        button(cx - w / 2 + bw + g, height * 0.48f, bw, h, "ОТМЕНА", true, () -> screen = Screen.MP);
+    }
+
+    private void screenAddServer() {
+        float u = gui(), w = btnW(), h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("ДОБАВЛЕНИЕ СЕРВЕРА");
+        float y = height * 0.26f;
+        Ui.label("НАЗВАНИЕ СЕРВЕРА", cx - w / 2, y, 2 * u, 1, 1, 1, 0.85f);
+        textField(cx - w / 2, y + 10 * u, w, h, serverNameInput, 3);
+        Ui.label("АДРЕС СЕРВЕРА", cx - w / 2, y + 10 * u + h + 12 * u, 2 * u, 1, 1, 1, 0.85f);
+        textField(cx - w / 2, y + 10 * u + h + 22 * u, w, h, serverAddressInput, 4);
+        float bw = (w - g) / 2;
+        float by = y + 10 * u + h + 22 * u + h + 14 * u;
+        button(cx - w / 2, by, bw, h, "ГОТОВО", true, this::addServer);
+        button(cx - w / 2 + bw + g, by, bw, h, "ОТМЕНА", true, () -> screen = Screen.MP);
+    }
+
+    private void addServer() {
+        String host = serverAddressInput.toString().trim();
+        if (host.isEmpty()) return;
+        String name = serverNameInput.toString().trim();
+        if (name.isEmpty()) name = host;
+        servers.add(new String[]{name, host});
+        selectedServer = servers.size() - 1;
+        saveServers();
+        screen = Screen.MP;
+    }
+
+    private void screenSettings() {
+        float u = gui(), w = btnW() * 1.5f, h = btnH(), g = btnGap();
+        float cx = width / 2f;
+        menuTitle("НАСТРОЙКИ");
+        float y = height * 0.20f;
+        optionRow(y, w, "ДАЛЬНОСТЬ", renderDistance + " ЧАНКОВ", () -> {
+            renderDistance = renderDistance >= 12 ? 2 : renderDistance + 2;
+            applySettings();
+        }); y += h + g;
+        optionRow(y, w, "FOV", (int) fov + "°", () -> {
+            fov = fov >= 110 ? 50 : fov + 10;
+            applySettings();
+        }); y += h + g;
+        optionRow(y, w, "ЧУВСТВИТЕЛЬНОСТЬ", (int) (sensitivity * 100) + "%", () -> {
+            sensitivity = sensitivity >= 0.40f ? 0.05f : sensitivity + 0.05f;
+            applySettings();
+        }); y += h + g;
+        optionRow(y, w, "ОБЛАКА", onOff(cloudsOn), () -> { cloudsOn = !cloudsOn; applySettings(); }); y += h + g;
+        optionRow(y, w, "ТУМАН", onOff(fogOn), () -> { fogOn = !fogOn; applySettings(); }); y += h + g;
+        button(cx - w / 2, y + 6 * u, w, h, "ГОТОВО", true, () -> screen = Screen.MAIN);
+    }
+
+    private void screenAchievements() {
+        float u = gui(), w = btnW(), h = btnH();
+        float cx = width / 2f;
+        menuTitle("ДОСТИЖЕНИЯ");
+        float rowH = Math.min(30 * u, (height * 0.60f) / Achievements.ALL.length);
+        float y = height * 0.17f;
+        float x = cx - (w + 90 * u) / 2;
+        for (String[] a : Achievements.ALL) {
+            boolean got = Achievements.has(a[0]);
+            Ui.color(got ? 0.32f : 0.16f, got ? 0.72f : 0.18f, got ? 0.28f : 0.22f, 1f);
+            Ui.quad(x, y + 2, x + rowH - 10, y + rowH - 8);
+            if (got) Ui.label("V", x + (rowH - 10) / 2 - 3, y + 3, 1.5f * u, 0.9f, 1f, 0.85f, 1f);
+            Ui.label(a[1], x + rowH, y, Math.min(2 * u, rowH * 0.22f), 1, 1, 1, got ? 1f : 0.45f);
+            Ui.label(a[2], x + rowH + 180 * u, y + rowH * 0.22f,
+                     Math.min(1.3f * u, rowH * 0.15f), 1, 1, 1, got ? 0.6f : 0.3f);
+            y += rowH;
+        }
+        button(cx - w / 2, height - 34 * u, w, h, "НАЗАД", true, () -> screen = Screen.MAIN);
+    }
+
+    private void screenCredits() {
+        float u = gui(), w = btnW(), h = btnH();
+        float cx = width / 2f;
+        menuTitle("АВТОРЫ");
+        String[] lines = {
+            "ВОКСЕЛЬНАЯ ПЕСОЧНИЦА НА JAVA + LWJGL", "",
+            "ИДЕЯ, ТЕКСТУРЫ, ПРОМПТЫ", "PACHUB / PACPERLAR", "",
+            "КОД", "CLAUDE  ·  CODEX", "",
+            "СПАСИБО ЗА ИГРУ!"
+        };
+        float y = height * 0.24f;
+        for (String ln : lines) {
+            if (!ln.isEmpty()) Ui.labelCentered(ln, cx, y, 2.4f * u, 0.9f, 0.92f, 0.96f, 1f);
+            y += 8 * u;
+        }
+        button(cx - w / 2, height - 34 * u, w, h, "НАЗАД", true, () -> screen = Screen.MAIN);
+    }
+
+    // ---------------- screen actions ----------------
+
+    private void createWorldNow() {
+        String name = createName.toString().trim();
+        if (!SaveGame.validName(name)) {
+            String cleaned = name.replaceAll("[^\\p{L}\\p{N}_-]", "");
+            name = SaveGame.validName(cleaned) ? cleaned : SaveGame.nextName();
+        }
+        long seed = parseSeed(createSeed.toString().trim());
+        screen = Screen.MAIN;
+        newWorld(createInfinite ? 1 : newChunks, name, seed, bonusChest);
+    }
+
+    /** Numeric seeds are used as-is; anything else is hashed (like Minecraft). */
+    private static long parseSeed(String text) {
+        if (text == null || text.isEmpty()) return System.nanoTime();
+        try { return Long.parseLong(text); } catch (NumberFormatException ignored) { return text.hashCode(); }
+    }
+
+    private String modeNameRu() {
+        return superMode ? "СУПЕР" : creativeMode ? "КРЕАТИВ" : "ВЫЖИВАНИЕ";
+    }
+
+    // ---------------- settings & servers storage ----------------
+
+    private static java.io.File pacmineDir() {
+        java.io.File dir = new java.io.File(System.getProperty("user.home"), ".pacmine");
+        dir.mkdirs();
+        return dir;
+    }
+
+    private void loadSettings() {
+        java.util.Properties p = new java.util.Properties();
+        java.io.File f = new java.io.File(pacmineDir(), "settings.properties");
+        try (java.io.InputStream in = new java.io.FileInputStream(f)) { p.load(in); } catch (Exception ignored) {}
+        renderDistance = clampInt(p.getProperty("render-distance"), 6, 2, 12);
+        fov = clampFloat(p.getProperty("fov"), 70f, 50f, 110f);
+        sensitivity = clampFloat(p.getProperty("sensitivity"), 0.12f, 0.02f, 0.5f);
+        cloudsOn = Boolean.parseBoolean(p.getProperty("clouds", "true"));
+        fogOn = Boolean.parseBoolean(p.getProperty("fog", "true"));
+        ChunkRenderer.setDefaultRenderDistance(renderDistance);
+    }
+
+    private void saveSettings() {
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("render-distance", String.valueOf(renderDistance));
+        p.setProperty("fov", String.valueOf(fov));
+        p.setProperty("sensitivity", String.valueOf(sensitivity));
+        p.setProperty("clouds", String.valueOf(cloudsOn));
+        p.setProperty("fog", String.valueOf(fogOn));
+        try (java.io.OutputStream out = new java.io.FileOutputStream(
+                new java.io.File(pacmineDir(), "settings.properties"))) {
+            p.store(out, "PACMine settings");
+        } catch (Exception ignored) {}
+    }
+
+    private void applySettings() {
+        if (renderer != null) renderer.setRenderDistance(renderDistance);
+        saveSettings();
+    }
+
+    private void loadServers() {
+        servers.clear();
+        java.io.File f = new java.io.File(pacmineDir(), "servers.txt");
+        if (!f.isFile()) return;
+        try {
+            for (String line : java.nio.file.Files.readAllLines(f.toPath())) {
+                int i = line.indexOf('|');
+                if (i <= 0) continue;
+                servers.add(new String[]{line.substring(0, i), line.substring(i + 1)});
+            }
+        } catch (Exception ignored) {}
+        selectedServer = servers.isEmpty() ? -1 : 0;
+    }
+
+    private void saveServers() {
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (String[] s : servers) sb.append(s[0]).append('|').append(s[1]).append('\n');
+            java.nio.file.Files.writeString(new java.io.File(pacmineDir(), "servers.txt").toPath(), sb.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private static int clampInt(String raw, int def, int min, int max) {
+        try { return Math.max(min, Math.min(max, Integer.parseInt(raw.trim()))); }
+        catch (Exception e) { return def; }
+    }
+
+    private static float clampFloat(String raw, float def, float min, float max) {
+        try { return Math.max(min, Math.min(max, Float.parseFloat(raw.trim()))); }
+        catch (Exception e) { return def; }
+    }
+
 
     /** Pixel-art night panorama behind the menus: sky, stars, moon, blocky hills. */
     private void drawMenuBackground() {
@@ -1684,17 +2060,17 @@ public class Main {
         glColor4f(0, 0, 0, 0.5f);
         quad(0, 0, width, height);
 
-        String title = "PAUSED";
-        float ts = 9;
-        float tx = width/2f - Font5x7.width(title, ts)/2, ty = height * 0.2f;
-        glColor4f(0, 0, 0, 0.6f);
-        Font5x7.draw(title, tx + ts * 0.7f, ty + ts * 0.7f, ts);
-        glColor3f(0.85f, 0.95f, 0.6f);
-        Font5x7.draw(title, tx, ty, ts);
-
-        drawButton(menuRect(0), "CONTINUE", 0.25f, 0.55f, 0.3f);
-        drawButton(menuRect(1), "SAVE WORLD", 0.3f, 0.45f, 0.6f);
-        drawButton(menuRect(2), "SAVE AND QUIT", 0.5f, 0.4f, 0.25f);
+        float u = gui(), w = btnW(), h = btnH();
+        float cx = width / 2f;
+        Ui.labelCentered("ПАУЗА", cx, height * 0.22f, 6 * u, 0.93f, 0.96f, 0.9f, 1f);
+        if (worldName != null)
+            Ui.labelCentered("МИР: " + worldName, cx, height * 0.22f + 48 * u, 1.8f * u, 1, 1, 1, 0.5f);
+        for (int i = 0; i < 3; i++) {
+            float[] r = pauseRect(i);
+            String label = i == 0 ? "ПРОДОЛЖИТЬ" : i == 1 ? "СОХРАНИТЬ МИР" : "ВЫЙТИ В МЕНЮ";
+            boolean enabled = i != 1 || !multiplayer;
+            Ui.button(r[0], r[1], w, h, label, inRect(r[0], r[1], w, h), enabled, h * 0.075f);
+        }
 
         glDisable(GL_BLEND);
         glEnable(GL_TEXTURE_2D);
@@ -1705,41 +2081,6 @@ public class Main {
         glMatrixMode(GL_MODELVIEW);
     }
 
-    /** Menu button: pixel shadow, dark tinted body, accent stripe + border, hover glow. */
-    private void drawButton(float[] r, String label, float cr, float cg, float cb) {
-        boolean hover = inRect(r, mouseX, mouseY);
-        boolean blend = glIsEnabled(GL_BLEND);
-        if (!blend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
-        // hard pixel drop shadow
-        glColor4f(0, 0, 0, 0.4f);
-        quad(r[0] + 4, r[1] + 4, r[2] + 4, r[3] + 4);
-        // body: dark panel tinted with the accent colour
-        float m = hover ? 0.55f : 0.30f;
-        glColor4f(0.08f + cr * m, 0.09f + cg * m, 0.12f + cb * m, 0.92f);
-        quad(r[0], r[1], r[2], r[3]);
-        // top bevel light
-        glColor4f(1, 1, 1, hover ? 0.20f : 0.08f);
-        quad(r[0], r[1], r[2], r[1] + 3);
-        // border
-        float bm = hover ? 1.7f : 0.9f;
-        glColor4f(Math.min(1, cr * bm), Math.min(1, cg * bm), Math.min(1, cb * bm), hover ? 1f : 0.7f);
-        float t = 2;
-        quad(r[0], r[1], r[2], r[1] + t); quad(r[0], r[3] - t, r[2], r[3]);
-        quad(r[0], r[1], r[0] + t, r[3]); quad(r[2] - t, r[1], r[2], r[3]);
-        // accent stripe on the left
-        glColor3f(Math.min(1, cr * 1.5f), Math.min(1, cg * 1.5f), Math.min(1, cb * 1.5f));
-        quad(r[0], r[1], r[0] + 6, r[3]);
-        // label centered, shrunk to fit, with a small shadow
-        float bw = r[2] - r[0];
-        float ls = Math.min(5f, (bw - 24) / (label.length() * 6));
-        float lw = Font5x7.width(label, ls), lh = 7 * ls;
-        float lx = (r[0] + r[2]) / 2 - lw / 2, ly = (r[1] + r[3]) / 2 - lh / 2;
-        glColor4f(0, 0, 0, 0.5f);
-        Font5x7.draw(label, lx + 2, ly + 2, ls);
-        glColor3f(1, 1, 1);
-        Font5x7.draw(label, lx, ly, ls);
-        if (!blend) glDisable(GL_BLEND);
-    }
 
     /** Row of hearts at the bottom-centre showing the player's health. */
     private void drawHearts() {
@@ -1828,7 +2169,7 @@ public class Main {
         boolean night = isNight();
         String flip = (night ? "День через: " : "Ночь через: ") + (int) secondsUntilFlip() + "s";
         String[] lines = {
-            "PACMINE  " + (int) fps + " fps",
+            "PACMINE " + BuildInfo.VERSION + "  " + (int) fps + " fps",
             String.format("XYZ: %.1f %.1f %.1f", player.x, player.y, player.z),
             String.format("Facing: yaw %.0f pitch %.0f", player.yaw, player.pitch),
             world.infinite ? "World: infinite (streaming)" : ("World: " + world.cx + "x" + world.cz + " chunks (" + world.sx + "x" + world.sz + ")"),
@@ -2292,7 +2633,7 @@ public class Main {
     }
 
     private void updateTitle() {
-        glfwSetWindowTitle(window, "PACMine");
+        glfwSetWindowTitle(window, "PACMine " + BuildInfo.VERSION);
     }
 
     public static void main(String[] args) {
@@ -2308,7 +2649,57 @@ public class Main {
             new Main().smokeTest(frames, shot, yaw, pitch);
             return;
         }
+        if (args.length > 0 && args[0].equals("--ui")) {
+            new Main().uiShot(args.length > 1 ? args[1] : "MAIN", args.length > 2 ? args[2] : null);
+            return;
+        }
+        if (args.length > 0 && args[0].equals("--newtest")) {
+            new Main().newWorldTest(args.length > 1 ? args[1] : "NEWTEST");
+            return;
+        }
         new Main().run();
+    }
+
+    /** End-to-end check of the create-world path (menu code without a mouse). */
+    private void newWorldTest(String name) {
+        init();
+        createName.setLength(0); createName.append(name);
+        createSeed.setLength(0); createSeed.append("paczxc");
+        createInfinite = false;
+        newChunks = 4;
+        bonusChest = true;
+        createWorldNow();
+        System.out.println("NEWTEST OK world=" + worldName
+                + " chunks=" + world.cx
+                + " blocks=" + world.data().length
+                + " wood=" + countOf(World.WOOD)
+                + " planks=" + countOf(World.PLANKS));
+        saveWorldQuietly();
+        glfwFreeCallbacks(window);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+    }
+
+    private void saveWorldQuietly() {
+        try { saveWorld(); } catch (IOException e) { System.err.println("save failed: " + e.getMessage()); }
+    }
+
+    /** Screenshot one menu screen without starting a game (development helper). */
+    private void uiShot(String screenName, String shotPath) {
+        init();
+        try { screen = Screen.valueOf(screenName.toUpperCase()); }
+        catch (IllegalArgumentException e) { screen = Screen.MAIN; }
+        worldList = SaveGame.list();
+        selectedWorld = worldList.isEmpty() ? null : worldList.get(0);
+        loadServers();
+        if (screen == Screen.CREATE && createName.length() == 0) createName.append("НОВЫЙ МИР");
+        inMenu = true;
+        mouseX = width * 0.5; mouseY = height * 0.5;
+        for (int i = 0; i < 4; i++) { renderMenu(); glfwSwapBuffers(window); glfwPollEvents(); }
+        if (shotPath != null) saveScreenshot(shotPath);
+        glfwFreeCallbacks(window);
+        glfwDestroyWindow(window);
+        glfwTerminate();
     }
 
     /**
@@ -2332,6 +2723,7 @@ public class Main {
     private void smokeTest(int frames, String shotPath, float yaw, float pitch) {
         init();
         world = new World(20260101L, 4, true);
+        if (renderer != null) renderer.dispose();   // free the previous world's display lists
         renderer = new ChunkRenderer(world, atlas);
         initLiquidSim();
         int[] dry = world.findDrySpawn(world.sx / 2, world.sz / 2, 32);

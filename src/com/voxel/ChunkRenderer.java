@@ -26,7 +26,16 @@ public class ChunkRenderer {
     // infinite (streaming) backend
     private final java.util.Map<Long, Integer> listByChunk = new java.util.HashMap<>();
     private final java.util.Set<Long> dirtyChunks = new java.util.HashSet<>();
-    private static final int RENDER_DIST = 6;   // chunks in each direction (~84 blocks)
+    private static int defaultRenderDist = 6;   // updated from the options screen
+    private int renderDist = defaultRenderDist;
+
+    /** Render distance used by renderers created from now on (options screen). */
+    public static void setDefaultRenderDistance(int chunks) {
+        defaultRenderDist = Math.max(2, Math.min(16, chunks));
+    }
+
+    /** Render distance in chunks (2..16), from the options screen. */
+    public void setRenderDistance(int chunks) { renderDist = Math.max(2, Math.min(16, chunks)); }
 
     // frustum culling
     private final Frustum frustum = new Frustum();
@@ -69,6 +78,19 @@ public class ChunkRenderer {
     public int chunksDrawn() { return drawn; }
     public int chunksCulled() { return culled; }
 
+    /** Release every display list this renderer owns (world change / shutdown). */
+    public void dispose() {
+        if (world.infinite) {
+            for (int l : listByChunk.values()) glDeleteLists(l, 1);
+            listByChunk.clear();
+            dirtyChunks.clear();
+        } else if (lists != null) {
+            for (int l : lists) if (l != 0) glDeleteLists(l, 1);
+            lists = null;
+            dirty = null;
+        }
+    }
+
     public void render(double px, double pz) {
         // the matrices are already set up by the caller
         projBuf.clear(); glGetFloatv(GL_PROJECTION_MATRIX, projBuf); projBuf.get(proj);
@@ -78,10 +100,16 @@ public class ChunkRenderer {
         drawn = 0; culled = 0;
         atlas.bind();
         if (world.infinite) { streamRender(px, pz); return; }
+        int pcx = Math.floorDiv((int) Math.floor(px), World.CHUNK);
+        int pcz = Math.floorDiv((int) Math.floor(pz), World.CHUNK);
         for (int cz = 0; cz < world.cz; cz++) {
             for (int cx = 0; cx < world.cx; cx++) {
                 int i = cz * world.cx + cx;
                 double bx0 = cx * World.CHUNK, bz0 = cz * World.CHUNK;
+                if (Math.abs(cx - pcx) > renderDist || Math.abs(cz - pcz) > renderDist) {
+                    culled++;                 // beyond the configured render distance
+                    continue;
+                }
                 if (!frustum.boxVisible(bx0, 0, bz0, bx0 + World.CHUNK, World.SY, bz0 + World.CHUNK)) {
                     culled++;                 // stays dirty, rebuilt when it comes back into view
                     continue;
@@ -99,8 +127,8 @@ public class ChunkRenderer {
         int pcz = Math.floorDiv((int) Math.floor(pz), World.CHUNK);
         int newBudget = 3;   // cap freshly generated chunks per frame to avoid hitches
 
-        for (int cz = pcz - RENDER_DIST; cz <= pcz + RENDER_DIST; cz++) {
-            for (int cx = pcx - RENDER_DIST; cx <= pcx + RENDER_DIST; cx++) {
+        for (int cz = pcz - renderDist; cz <= pcz + renderDist; cz++) {
+            for (int cx = pcx - renderDist; cx <= pcx + renderDist; cx++) {
                 double bx0 = cx * (double) World.CHUNK, bz0 = cz * (double) World.CHUNK;
                 boolean visible = frustum.boxVisible(bx0, 0, bz0, bx0 + World.CHUNK, World.SY, bz0 + World.CHUNK);
                 long k = key(cx, cz);
@@ -127,7 +155,7 @@ public class ChunkRenderer {
         while (it.hasNext()) {
             var en = it.next();
             int cx = (int) (en.getKey() >> 32), cz = (int) (long) en.getKey();
-            if (Math.abs(cx - pcx) > RENDER_DIST + 2 || Math.abs(cz - pcz) > RENDER_DIST + 2) {
+            if (Math.abs(cx - pcx) > renderDist + 2 || Math.abs(cz - pcz) > renderDist + 2) {
                 glDeleteLists(en.getValue(), 1);
                 it.remove();
             }
